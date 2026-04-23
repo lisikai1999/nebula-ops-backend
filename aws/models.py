@@ -932,3 +932,219 @@ class AWSElbV2():
     pass
 
 
+class AWSAthena():
+    """
+        Athena 相关
+    """
+    
+    @staticmethod
+    def get_environments():
+        """
+            获取所有可用的 AWS 环境列表
+        """
+        result = []
+        for index, item in enumerate(access_list):
+            env_info = {
+                "id": item["env"],
+                "name": item["env"],
+                "is_default": index == 0,
+                "region": item.get("region", ""),
+                "account_id": ""
+            }
+            result.append(env_info)
+        return result
+    
+    @staticmethod
+    def get_databases(env):
+        """
+            获取指定环境下的所有 Athena 数据库
+        """
+        result = []
+        for index, item in enumerate(access_list):
+            if item["env"] == env:
+                athena_client = boto3.client(
+                    'athena',
+                    aws_access_key_id=item["access_key"],
+                    aws_secret_access_key=item["secret_key"],
+                    region_name=item["region"]
+                )
+                
+                response = athena_client.list_databases(
+                    CatalogName='AwsDataCatalog'
+                )
+                
+                for database in response.get('DatabaseList', []):
+                    result.append(database.get('Name', ''))
+                
+                while 'NextToken' in response:
+                    response = athena_client.list_databases(
+                        CatalogName='AwsDataCatalog',
+                        NextToken=response['NextToken']
+                    )
+                    for database in response.get('DatabaseList', []):
+                        result.append(database.get('Name', ''))
+                
+                break
+        
+        return result
+    
+    @staticmethod
+    def get_tables(env, database):
+        """
+            获取指定数据库下的所有数据表
+        """
+        result = []
+        for index, item in enumerate(access_list):
+            if item["env"] == env:
+                athena_client = boto3.client(
+                    'athena',
+                    aws_access_key_id=item["access_key"],
+                    aws_secret_access_key=item["secret_key"],
+                    region_name=item["region"]
+                )
+                
+                response = athena_client.list_table_metadata(
+                    CatalogName='AwsDataCatalog',
+                    DatabaseName=database
+                )
+                
+                for table in response.get('TableMetadataList', []):
+                    result.append(table.get('Name', ''))
+                
+                while 'NextToken' in response:
+                    response = athena_client.list_table_metadata(
+                        CatalogName='AwsDataCatalog',
+                        DatabaseName=database,
+                        NextToken=response['NextToken']
+                    )
+                    for table in response.get('TableMetadataList', []):
+                        result.append(table.get('Name', ''))
+                
+                break
+        
+        return result
+    
+    @staticmethod
+    def execute_query(env, database, sql, limit=100):
+        """
+            执行 Athena SQL 查询并返回结果
+        """
+        result = {
+            "query_info": {},
+            "columns": [],
+            "data": [],
+            "row_count": 0,
+            "execution_time": 0
+        }
+        
+        for index, item in enumerate(access_list):
+            if item["env"] == env:
+                athena_client = boto3.client(
+                    'athena',
+                    aws_access_key_id=item["access_key"],
+                    aws_secret_access_key=item["secret_key"],
+                    region_name=item["region"]
+                )
+                
+                query_execution_context = {}
+                if database:
+                    query_execution_context['Database'] = database
+                
+                response = athena_client.start_query_execution(
+                    QueryString=sql,
+                    QueryExecutionContext=query_execution_context,
+                    ResultConfiguration={
+                        'OutputLocation': f's3://aws-athena-query-results-{item.get("account_id", "")}-{item["region"]}/'
+                    }
+                )
+                
+                query_execution_id = response['QueryExecutionId']
+                
+                query_execution = athena_client.get_query_execution(
+                    QueryExecutionId=query_execution_id
+                )
+                
+                status = query_execution['QueryExecution']['Status']['State']
+                while status in ['QUEUED', 'RUNNING']:
+                    import time
+                    time.sleep(1)
+                    query_execution = athena_client.get_query_execution(
+                        QueryExecutionId=query_execution_id
+                    )
+                    status = query_execution['QueryExecution']['Status']['State']
+                
+                query_info = query_execution['QueryExecution']
+                result["query_info"] = {
+                    "query_id": query_execution_id,
+                    "status": status,
+                    "data_scanned_bytes": query_info.get('Statistics', {}).get('DataScannedInBytes', 0),
+                    "execution_time_ms": query_info.get('Statistics', {}).get('EngineExecutionTimeInMillis', 0),
+                    "output_location": query_info.get('ResultConfiguration', {}).get('OutputLocation', ''),
+                    "submission_time": query_info.get('Status', {}).get('SubmissionDateTime', '').isoformat() if query_info.get('Status', {}).get('SubmissionDateTime') else ''
+                }
+                
+                result["execution_time"] = query_info.get('Statistics', {}).get('EngineExecutionTimeInMillis', 0) / 1000.0
+                
+                if status == 'SUCCEEDED':
+                    results_response = athena_client.get_query_results(
+                        QueryExecutionId=query_execution_id,
+                        MaxResults=limit
+                    )
+                    
+                    rows = results_response.get('ResultSet', {}).get('Rows', [])
+                    if len(rows) > 0:
+                        header_row = rows[0]
+                        for col in header_row.get('Data', []):
+                            col_info = {
+                                "name": col.get('VarCharValue', ''),
+                                "type": "varchar"
+                            }
+                            result["columns"].append(col_info)
+                        
+                        for row in rows[1:]:
+                            row_data = {}
+                            for i, col in enumerate(row.get('Data', [])):
+                                if i < len(result["columns"]):
+                                    col_name = result["columns"][i]["name"]
+                                    row_data[col_name] = col.get('VarCharValue', None)
+                            result["data"].append(row_data)
+                        
+                        result["row_count"] = len(result["data"])
+                
+                break
+        
+        return result
+    
+    @staticmethod
+    def get_query_status(env, query_id):
+        """
+            获取查询状态
+        """
+        result = {}
+        for index, item in enumerate(access_list):
+            if item["env"] == env:
+                athena_client = boto3.client(
+                    'athena',
+                    aws_access_key_id=item["access_key"],
+                    aws_secret_access_key=item["secret_key"],
+                    region_name=item["region"]
+                )
+                
+                query_execution = athena_client.get_query_execution(
+                    QueryExecutionId=query_id
+                )
+                
+                query_info = query_execution['QueryExecution']
+                result = {
+                    "query_id": query_id,
+                    "status": query_info['Status']['State'],
+                    "state_change_reason": query_info['Status'].get('StateChangeReason'),
+                    "submission_time": query_info['Status'].get('SubmissionDateTime', '').isoformat() if query_info['Status'].get('SubmissionDateTime') else None,
+                    "completion_time": query_info['Status'].get('CompletionDateTime', '').isoformat() if query_info['Status'].get('CompletionDateTime') else None
+                }
+                
+                break
+        
+        return result
+
+

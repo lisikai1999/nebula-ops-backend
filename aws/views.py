@@ -7,7 +7,7 @@ from django.contrib.auth import authenticate, login
 from django.contrib.auth.decorators import login_required
 
 from utils import iam
-from .models import AWSUser, AWSCloudWatch, AWSecs, AWSRoute53
+from .models import AWSUser, AWSCloudWatch, AWSecs, AWSRoute53, AWSAthena
 from settings import emailList, access_list
 
 # 封装api接口
@@ -195,3 +195,160 @@ def download(request):
             return response
     else:
         return JsonResponse([], safe=False)
+
+
+@login_required_401
+def get_athena_environments(request):
+    """
+        获取所有可用的 AWS 环境列表
+    """
+    try:
+        environments = AWSAthena.get_environments()
+        return JsonResponse({
+            "status": "success",
+            "data": environments
+        })
+    except Exception as e:
+        return JsonResponse({
+            "status": "error",
+            "message": "获取环境列表失败",
+            "detail": str(e)
+        }, status=500)
+
+
+@login_required_401
+def get_athena_databases(request):
+    """
+        获取指定环境下的所有 Athena 数据库
+    """
+    try:
+        env = request.GET.get('env', None)
+        if not env:
+            return JsonResponse({
+                "status": "error",
+                "message": "参数缺失",
+                "detail": "env 参数是必需的"
+            }, status=400)
+        
+        databases = AWSAthena.get_databases(env)
+        return JsonResponse({
+            "status": "success",
+            "data": databases
+        })
+    except Exception as e:
+        return JsonResponse({
+            "status": "error",
+            "message": "获取数据库列表失败",
+            "detail": str(e)
+        }, status=500)
+
+
+@login_required_401
+def get_athena_tables(request):
+    """
+        获取指定数据库下的所有数据表
+    """
+    try:
+        env = request.GET.get('env', None)
+        database = request.GET.get('database', None)
+        
+        if not env or not database:
+            return JsonResponse({
+                "status": "error",
+                "message": "参数缺失",
+                "detail": "env 和 database 参数是必需的"
+            }, status=400)
+        
+        tables = AWSAthena.get_tables(env, database)
+        return JsonResponse({
+            "status": "success",
+            "data": tables
+        })
+    except Exception as e:
+        return JsonResponse({
+            "status": "error",
+            "message": "获取数据表列表失败",
+            "detail": str(e)
+        }, status=500)
+
+
+@login_required_401
+def execute_athena_query(request):
+    """
+        执行 Athena SQL 查询并返回结果
+    """
+    if request.method != 'POST':
+        return JsonResponse({
+            "status": "error",
+            "message": "方法不允许",
+            "detail": "只支持 POST 请求"
+        }, status=405)
+    
+    try:
+        body = json.loads(request.body)
+        environment = body.get('environment', None)
+        database = body.get('database', None)
+        sql = body.get('sql', None)
+        limit = body.get('limit', 100)
+        
+        if not environment or not sql:
+            return JsonResponse({
+                "status": "error",
+                "message": "参数缺失",
+                "detail": "environment 和 sql 参数是必需的"
+            }, status=400)
+        
+        result = AWSAthena.execute_query(environment, database, sql, limit)
+        
+        if result["query_info"].get("status") == "FAILED":
+            return JsonResponse({
+                "status": "error",
+                "message": "查询执行失败",
+                "detail": result["query_info"].get("state_change_reason", "未知错误")
+            }, status=500)
+        
+        return JsonResponse({
+            "status": "success",
+            "data": result
+        })
+    except json.JSONDecodeError:
+        return JsonResponse({
+            "status": "error",
+            "message": "请求体格式错误",
+            "detail": "请提供有效的 JSON 格式"
+        }, status=400)
+    except Exception as e:
+        return JsonResponse({
+            "status": "error",
+            "message": "执行查询失败",
+            "detail": str(e)
+        }, status=500)
+
+
+@login_required_401
+def get_athena_query_status(request):
+    """
+        获取查询状态
+    """
+    try:
+        env = request.GET.get('env', None)
+        query_id = request.GET.get('query_id', None)
+        
+        if not env or not query_id:
+            return JsonResponse({
+                "status": "error",
+                "message": "参数缺失",
+                "detail": "env 和 query_id 参数是必需的"
+            }, status=400)
+        
+        status = AWSAthena.get_query_status(env, query_id)
+        return JsonResponse({
+            "status": "success",
+            "data": status
+        })
+    except Exception as e:
+        return JsonResponse({
+            "status": "error",
+            "message": "获取查询状态失败",
+            "detail": str(e)
+        }, status=500)
