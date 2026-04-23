@@ -1,0 +1,214 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block content %}
+<div id="ecsInfo" class="app" style="background-color: #ffffff;padding: 20px;border-radius: 10px;">
+    <h2>
+        ecs信息查看
+    </h2>
+    <!-- 环状旋转器 -->
+    <div v-if="process" class="spinner-border" style="width: 4rem; height: 4rem;" role="status">
+        <span class="sr-only"></span>
+    </div>
+
+
+    <div class="form-group">
+        <select class="form-control" id="exampleFormControlSelect1" v-model="env" @change>
+            <option v-for="item in envs">[[ item ]]</option>
+        </select>
+        <button @click="get_ecs_service_info()">搜索</button>
+    </div>
+    </br>
+    </br>
+    </br>
+
+
+    <div style="width: 100%;overflow-x: auto;">
+        <table id="log-LoginLog-datatable" class="display table table-striped table-hover dataTable" role="grid">
+            <thead>
+                <tr role="row">
+                    <th class="sorting" style="width: 200px;">集群</th>
+                    <th class="sorting">服务</th>
+                    <th class="sorting" style="width: 10px;">任务数量</th>
+                    <th class="sorting" style="width: 10px;">cpu</th>
+                    <th class="sorting" style="width: 10px;">mem</th>
+                    <th class="sorting">cpu负载-7</th>
+                    <th class="sorting">mem负载-7</th>
+                    <th class="sorting">自动扩缩容</th>
+                    <th class="sorting">cpu策略</th>
+                    <th class="sorting">内存策略</th>
+                    <th class="sorting">最小数量</th>
+                    <th class="sorting">最大数量</th>
+                    <th class="sorting">数据库</th>
+                    <th class="sorting">数据库类型</th>
+                    <th class="sorting">数据库实例类型</th>
+                    <th class="sorting">数据库cpu</th>
+                    <th class="sorting">数据库内存</th>
+                    <th class="sorting">数据库引擎</th>
+                    <th class="sorting">数据库版本</th>
+                    <th class="sorting">redis</th>
+                    <th class="sorting">redis实例类型</th>
+                    <th class="sorting">redis版本</th>
+                    <th class="sorting">redis节点</th>
+                </tr>
+            </thead>
+            <tfoot>
+                <tr>
+                    <th class="sorting" style="width: 200.25px;">集群</th>
+                    <th class="sorting">服务</th>
+                    <th class="sorting">任务数量</th>
+                    <th class="sorting">单任务cpu</th>
+                    <th class="sorting">单任务mem</th>
+                    <th class="sorting">cpu负载-7</th>
+                    <th class="sorting">mem负载-7</th>
+                    <th class="sorting">自动扩缩容</th>
+                    <th class="sorting">cpu策略</th>
+                    <th class="sorting">内存策略</th>
+                    <th class="sorting">最小数量</th>
+                    <th class="sorting">最大数量</th>
+                    <th class="sorting">数据库</th>
+                    <th class="sorting">数据库类型</th>
+                    <th class="sorting">数据库实例类型</th>
+                    <th class="sorting">数据库cpu</th>
+                    <th class="sorting">数据库内存</th>
+                    <th class="sorting">数据库引擎</th>
+                    <th class="sorting">数据库版本</th>
+                    <th class="sorting">redis</th>
+                    <th class="sorting">redis实例类型</th>
+                    <th class="sorting">redis版本</th>
+                    <th class="sorting">redis节点</th>
+                </tr>
+            </tfoot>
+            <tbody>
+                <tr v-for="(ecs, index) in ecsInfo" :key="index" role="row" class="odd">
+                    <td>[[ ecs.cluster ]]</td>
+                    <td>
+                        <button @click="test()">[[ ecs.services]]</button>
+                    </td>
+                    <td> [[ ecs.taskCount ]] </td>
+                    <td> [[ ecs.cpuPerTask ]] </td>
+                    <td> [[ ecs.memPerTask ]] </td>
+                    <td> [[ ecs.cpuLoad7Days ]] </td>
+                    <td> [[ ecs.memLoad7Days ]] </td>
+                    <td> [[ ecs.autoScaling ]] </td>
+                    <td> [[ ecs.cpuPolicy ]] </td>
+                    <td> [[ ecs.memPolicy ]] </td>
+                    <td> [[ ecs.minInstances ]] </td>
+                    <td> [[ ecs.maxInstances ]] </td>
+                    <td> [[ ecs.database ]] </td>
+                    <td> [[ ecs.databaseType ]] </td>
+                    <td> [[ ecs.databaseInstanceType ]] </td>
+                    <td> [[ ecs.databaseCpu ]] </td>
+                    <td> [[ ecs.databaseMem ]] </td>
+                    <td> [[ ecs.databaseEngine ]] </td>
+                    <td> [[ ecs.databaseVersion ]] </td>
+                    <td> [[ ecs.redis ]] </td>
+                    <td> [[ ecs.redisInstanceType ]] </td>
+                    <td> [[ ecs.redisVersion ]] </td>
+                    <td> [[ ecs.redisNodes ]] </td>
+                </tr>
+
+            </tbody>
+        </table>
+
+    </div>
+
+
+    <!-- Bootstrap JS -->
+    <script src="{% static 'js/bootstrap.bundle.min.js' %}"></script>
+
+    <!-- Vue.js -->
+    <script src="{% static 'js/vue.global.min.js' %}"></script>
+    <script src="{% static 'js/index.js' %}"></script>
+
+    <!-- Axios (用于发送AJAX请求) -->
+    <script src="{% static 'js/axios.min.js' %}"></script>
+    <script src="{% static 'js/jquery.js' %}"></script>
+    <script src="{% static 'js/datatables/dataTables.js' %}"></script>
+    <script src="{% static 'js/datatables/buttons/3.1.2/js/dataTables.buttons.js' %}"></script>
+    <script src="{% static 'js/datatables/buttons/3.1.2/js/buttons.dataTables.js' %}"></script>
+    <script src="{% static 'js/ajax/libs/jszip/3.10.1/jszip.min.js' %}"></script>
+    <script src="{% static 'js/datatables/buttons/3.1.2/js/buttons.html5.min.js' %}"></script>
+
+
+
+    <script>
+        const app = Vue.createApp({
+            delimiters: ['[[', ']]'],   // 默认与Django的插值语法冲突，修改语法格式
+            data() {
+                return {
+                    ecsInfo: [], // ecs数据
+                    loading: true,  // 数据加载完成为false
+                    envs: ["china dev", "china dev-staging", "china prod", "singapore-dev", "singapore-staging", "singapore-prod", "usa-prod"],
+                    env: '',        // 查看的环境
+                    process: false,
+                    taskDefine: '',
+
+                };
+            },
+            methods: {
+                test() {
+
+
+                },
+                // 获取ecs服务信息
+                async get_ecs_service_info() {
+                    this.process = true
+                    await axios.get('/aws/get_ecs_info?env=' + this.env)
+                        .then(response => {
+                            this.ecsInfo = response.data
+                            // $('#log-LoginLog-datatable').DataTable().destroy();
+
+                            // 先赋值，在初始化。
+                            // $('#log-LoginLog-datatable').DataTable(
+                            //     {
+                            //         layout: {
+                            //             topStart: {
+                            //                 buttons: [
+                            //                     {
+                            //                         extend: 'excelHtml5',
+                            //                         text: '导出excel',
+                            //                         customize: function (xlsx) {
+                            //                             var sheet = xlsx.xl.worksheets['sheet1.xml'];
+
+                            //                             sheet.querySelectorAll('row c[r^="C"]').forEach((el) => {
+                            //                                 el.setAttribute('s', '2');
+                            //                             });
+                            //                         }
+                            //                     }
+                            //                 ]
+                            //             }
+                            //         }
+                            //     }
+                            // );
+
+                        })
+                        .catch(error => {
+                            alert("获取数据失败")
+                            console.error(error);
+                        })
+                        .finally(response => {
+                            // 取消旋转动画
+                            this.process = false
+                        });
+
+                },
+
+            },
+            mounted() {
+                document.getElementById("ecs-info").classList.add("active"); // 激活左侧标签栏
+                $('#log-LoginLog-datatable').DataTable();
+            },
+            updated() {
+                // $('#log-LoginLog-datatable').DataTable().destroy();
+                $('#log-LoginLog-datatable').DataTable();
+            }
+        });
+
+        app.mount('#ecsInfo');
+
+    </script>
+
+</div>
+
+{% endblock %}

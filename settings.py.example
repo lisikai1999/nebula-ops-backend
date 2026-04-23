@@ -1,0 +1,106 @@
+# aws 用户名: 邮箱 字典
+emailList = {
+    'test@test.com': 'test@test.com'    
+}
+
+
+# 检测aws账号的access_key列表
+access_list = [
+    {
+        "region": 'cn-northwest-1',
+        "env": 'china dev',
+        "access_key": '',
+        "secret_key": '',
+        "login_url": ""
+    },
+    {
+        "region": 'cn-north-1',
+        "env": 'china dev-staging',
+        "access_key": '',
+        "secret_key": '',
+        "login_url": ""
+    },
+    {
+        "region": 'cn-north-1',
+        "env": 'china prod',
+        "access_key": '',
+        "secret_key": '',
+        "login_url": ""
+    },
+    {
+        "env": "singapore-dev",
+        "region": 'ap-southeast-1',
+        "access_key": '',
+        "secret_key": ''
+    },
+    {
+        "env": "singapore-staging",
+        "region": 'ap-southeast-1',
+        "access_key": '',
+        "secret_key": ''
+    },
+    {
+        "env": "singapore-prod",
+        "region": 'ap-southeast-1',
+        "access_key": '',
+        "secret_key": ''
+    },
+    {
+        "env": "usa-prod",
+        "region": 'us-east-1',
+        "access_key": '',
+        "secret_key": ''
+    },
+    {
+        "env": "Spain-prod",
+        "region": 'eu-south-2',
+        "access_key": '',
+        "secret_key": ''
+    }
+]
+
+# 管理员邮箱，用来发送邮件 和 接收错误信息邮件
+adminEmail = ''
+# 管理员邮箱密码
+adminPassword = ''
+
+# 抄送邮箱列表，多个邮箱用逗号分隔
+ccEmail = ''
+
+
+# rds实例类型
+rdsSizeList = {
+    "db.r5.large": {"CPU": "2", "MEMORY": "16", "NETWORK": "4750"},
+    "db.r5.xlarge": {"CPU": "4", "MEMORY": "32", "NETWORK": "4750"},
+    "db.r5.2xlarge": {"CPU": "8", "MEMORY": "64", "NETWORK": "4750"},
+    "db.r5.4xlarge": {"CPU": "16", "MEMORY": "128", "NETWORK": "4750"},
+    "db.r5.8xlarge": {"CPU": "32", "MEMORY": "256", "NETWORK": "6800"},
+    "db.r5.12xlarge": {"CPU": "48", "MEMORY": "384", "NETWORK": "9500"},
+    "db.r6g.large": {"CPU": "2", "MEMORY": "16", "NETWORK": "4750"},
+    "db.r6g.xlarge": {"CPU": "4", "MEMORY": "32", "NETWORK": "4750"},
+    "db.r6g.2xlarge": {"CPU": "8", "MEMORY": "64", "NETWORK": "4750"},
+    "db.r6g.4xlarge": {"CPU": "16", "MEMORY": "128", "NETWORK": "4750"},
+    "db.r5d.large": {"CPU": "2", "MEMORY": "16", "NETWORK": "4750"},
+    "db.r5d.xlarge": {"CPU": "4", "MEMORY": "32", "NETWORK": "4750"},
+    "db.r5d.2xlarge": {"CPU": "8", "MEMORY": "64", "NETWORK": "4750"},
+    "db.r5d.4xlarge": {"CPU": "16", "MEMORY": "128", "NETWORK": "4750"},
+    "db.t3.micro": {"CPU": "2", "MEMORY": "1", "NETWORK": "2085"},
+    "db.t3.small": {"CPU": "2", "MEMORY": "2", "NETWORK": "2085"},
+    "db.t3.medium": {"CPU": "2", "MEMORY": "4", "NETWORK": "2085"},
+    "db.t3.large": {"CPU": "2", "MEMORY": "8", "NETWORK": "2780"},
+    "db.t3.xlarge": {"CPU": "4", "MEMORY": "16", "NETWORK": "2780"},
+    "db.t3.2xlarge": {"CPU": "8", "MEMORY": "32", "NETWORK": "2780"},
+    "db.t4g.micro": {"CPU": "2", "MEMORY": "1", "NETWORK": "2085"},
+    "db.t4g.small": {"CPU": "2", "MEMORY": "2", "NETWORK": "2085"},
+    "db.t4g.medium": {"CPU": "2", "MEMORY": "4", "NETWORK": "2085"},
+    "db.t4g.large": {"CPU": "2", "MEMORY": "8", "NETWORK": "2780"},
+}
+
+# ai
+ApiKey = ""
+
+# 向量数据库连接配置
+CHROMA_HOST = "10.8.51.123"
+CHROMA_PORT = "8000"
+CHROMA_COLLECTION = "test"
+

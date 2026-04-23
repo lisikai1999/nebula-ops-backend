@@ -1,0 +1,58 @@
+104 days, 4:42:27.177454
+<class 'datetime.timedelta'>
+78 days, 2:46:56.177454
+<class 'datetime.timedelta'>
+78 days, 5:29:58.177454
+<class 'datetime.timedelta'>
+[21/Apr/2026 09:04:12] "GET /aws/get_user_info HTTP/1.1" 200 2016
+[21/Apr/2026 09:04:14] "GET /aws/get_cloudwatch_IncomingBytes HTTP/1.1" 200 21141
+54 days, 22:47:44.747684
+<class 'datetime.timedelta'>
+70 days, 13:54:27.747684
+<class 'datetime.timedelta'>
+43 days, 22:50:15.747684
+<class 'datetime.timedelta'>
+49 days, 11:05:44.747684
+<class 'datetime.timedelta'>
+43 days, 22:52:42.747684
+<class 'datetime.timedelta'>
+88 days, 23:02:24.457536
+<class 'datetime.timedelta'>
+92 days, 19:20:58.457536
+<class 'datetime.timedelta'>
+71 days, 16:24:01.457536
+<class 'datetime.timedelta'>
+222 days, 21:54:24.457536
+<class 'datetime.timedelta'>
+228 days, 17:22:26.457536
+<class 'datetime.timedelta'>
+104 days, 22:02:15.457536
+<class 'datetime.timedelta'>
+78 days, 20:06:44.457536
+<class 'datetime.timedelta'>
+78 days, 22:49:46.457536
+<class 'datetime.timedelta'>
+[22/Apr/2026 02:24:00] "GET /aws/get_user_info HTTP/1.1" 200 2016
+[22/Apr/2026 02:49:43] "GET /login/ HTTP/1.1" 200 3366
+[22/Apr/2026 02:49:44] "POST /aws/login HTTP/1.1" 200 48
+[22/Apr/2026 02:49:57] "GET /aws/get_cloudwatch_IncomingBytes HTTP/1.1" 200 21062
+[22/Apr/2026 03:51:12] "GET /aws/get_user_info HTTP/1.1" 302 0
+[22/Apr/2026 03:51:22] "GET /login/ HTTP/1.1" 200 3366
+Forbidden (Origin checking failed - http://10.12.18.184:5000 does not match any trusted origins.): /aws/login
+[22/Apr/2026 03:51:22] "POST /aws/login HTTP/1.1" 403 2572
+[22/Apr/2026 03:51:23] "GET /aws/get_cloudwatch_IncomingBytes HTTP/1.1" 302 0
+[22/Apr/2026 09:04:27] "GET /login/ HTTP/1.1" 200 3366
+Forbidden (Origin checking failed - http://10.12.18.184:5000 does not match any trusted origins.): /aws/login
+[22/Apr/2026 09:04:27] "POST /aws/login HTTP/1.1" 403 2572
+[22/Apr/2026 09:04:28] "GET /aws/get_cloudwatch_IncomingBytes HTTP/1.1" 302 0
+[22/Apr/2026 09:07:44] "GET /login/ HTTP/1.1" 200 3366
+Forbidden (Origin checking failed - http://10.12.18.184:5000 does not match any trusted origins.): /aws/login
+[22/Apr/2026 09:07:44] "POST /aws/login HTTP/1.1" 403 2572
+[22/Apr/2026 09:07:44] "GET /aws/get_cloudwatch_IncomingBytes HTTP/1.1" 302 0
+[22/Apr/2026 09:08:02] "GET /aws/get_cloudwatch_IncomingBytes HTTP/1.1" 302 0
+[22/Apr/2026 09:08:03] "GET /aws/get_cloudwatch_IncomingBytes HTTP/1.1" 302 0
+[22/Apr/2026 09:08:27] "GET /login/ HTTP/1.1" 200 3366
+Forbidden (Origin checking failed - http://10.12.18.184:5000 does not match any trusted origins.): /aws/login
+[22/Apr/2026 09:08:27] "POST /aws/login HTTP/1.1" 403 2572
+[22/Apr/2026 09:08:27] "GET /aws/get_cloudwatch_IncomingBytes HTTP/1.1" 302 0
+

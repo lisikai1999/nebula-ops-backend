@@ -1,0 +1,123 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block content %}
+<div id="userMange" class="container mt-5" style="background-color: #ffffff;padding: 10px;">
+    <h2>AWS 用户数据 <h4 v-if="loading"> 加载中...</h4>
+    </h2>
+    <table class="table table-striped">
+        <thead>
+            <tr>
+                <th>用户名</th>
+                <th>环境</th>
+                <th>邮箱</th>
+                <th>未登录天数</th>
+                <th>操作</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr v-for="user in users">
+                <td>[[ user.username ]]</td>
+                <th>[[ user.env ]]</th>
+                <td>[[ user.email]] </td>
+                <td> [[ user.days_since_last_login ]] </td>
+                <td>
+                    <!-- 操作按钮 -->
+                    <a href="#" @click="disable_console(user.username, user.env)"
+                        class="btn btn-warning btn-sm">禁用控制台</a>
+                    <a href="#" @click="reset_password(user.username, user.env)" class="btn btn-primary btn-sm">修改密码</a>
+                </td>
+            </tr>
+        </tbody>
+    </table>
+
+
+    <!-- Bootstrap JS -->
+    <!-- <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script> -->
+    <script src="{% static 'js/bootstrap.bundle.min.js' %}"></script>
+    <!-- Vue.js -->
+    <!-- <script src="https://cdn.jsdelivr.net/npm/vue@3.3.0/dist/vue.global.min.js"></script> -->
+    <script src="{% static 'js/vue.global.min.js' %}"></script>
+    <!-- Axios (用于发送AJAX请求) -->
+    <script src="{% static 'js/axios.min.js' %}"></script>
+
+    <script>
+
+        const app = Vue.createApp({
+            delimiters: ['[[', ']]'],   // 默认与Django的插值语法冲突，修改语法格式
+            data() {
+                return {
+                    users: [], // 用户数据
+                    loading: true,  // 数据加载完成为false
+                };
+            },
+            methods: {
+                async get_user_info() {
+                    // 获取超时未登录用户数据
+                    response = await axios.get('/aws/get_user_info')
+                    this.users = response.data
+                    this.loading = false
+                },
+                disable_console(username, env) {
+                    if (confirm("确认禁用" + env + ":" + username + "控制台权限?")) {
+                        const params = new URLSearchParams();
+                        params.append('env', env);
+
+                        var csrfToken = document.querySelector('[name="csrfmiddlewaretoken"]').value;
+
+                        axios.post("/aws/disable_console/" + username, params, {
+                            headers: {
+                                'X-CSRFToken': csrfToken
+                            }
+                        }).
+                            then(response => {
+                                alert("禁用" + env + ":" + username + "成功")
+                            }).catch(function (error) {
+                                console.log(error);
+                                alert("禁用" + env + ":" + username + "失败")
+                            });
+                    } else {
+                        console.log("用户点击了取消");
+                        // 在这里执行取消后的操作
+                    }
+
+                },
+                reset_password(username, env) {
+                    if (confirm("确认重置" + env + ":" + username + "密码?")) {
+                        const params = new URLSearchParams();
+                        params.append('env', env);
+
+                        var csrfToken = document.querySelector('[name="csrfmiddlewaretoken"]').value;
+
+                        axios.post("/aws/reset_password/" + username, params, {
+                            headers: {
+                                'X-CSRFToken': csrfToken
+                            }
+                        }).
+                            then(response => {
+                                alert("重置" + env + ":" + username + "密码成功")
+                            }).catch(function (error) {
+                                console.log(error);
+                                alert("重置" + env + ":" + username + "密码失败")
+                            });
+                    } else {
+                        console.log("用户点击了取消");
+                        // 在这里执行取消后的操作
+                    }
+                }
+
+            },
+            mounted() {
+                document.getElementById("aws-user-link").classList.add("active"); // 激活左侧标签栏
+                this.get_user_info()
+            }
+
+        });
+
+        app.mount('#userMange');
+
+    </script>
+
+</div>
+
+{% endblock %}

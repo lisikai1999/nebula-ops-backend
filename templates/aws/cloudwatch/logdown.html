@@ -1,0 +1,162 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block content %}
+
+<!-- 引入Element UI 的样式文件 -->
+<link href="{% static 'css/index.css' %}" rel="stylesheet">
+
+
+<div id="app" style="background-color: #ffffff;padding: 10px;">
+  <el-container>
+    <el-header>
+      <h2>日志下载</h2>
+    </el-header>
+    <el-main>
+      <el-form ref="form" :model="form" label-width="120px">
+
+        <el-form-item label="过滤条件">
+          <el-input v-model="form.filterPattern" style="width: 500px;" filterable placeholder="过滤条件">
+          </el-input>
+          <a href="https://docs.amazonaws.cn/AmazonCloudWatch/latest/logs/FilterAndPatternSyntax.html#matching-terms-events"
+            target="_blank">
+            点击查看语法
+          </a>
+        </el-form-item>
+        <el-form-item label="*开始时间">
+          <el-date-picker v-model="form.stime" type="datetime" placeholder="开始时间"></el-date-picker>
+        </el-form-item>
+
+        <el-form-item label="*结束时间">
+          <el-date-picker v-model="form.etime" type="datetime" placeholder="结束时间"></el-date-picker>
+        </el-form-item>
+
+        <el-form-item label="*选择环境">
+          <el-select v-model="form.env" placeholder="请选择" @change="changeEnv">
+            <el-option v-for="item in env" :label="item" :value="item"></el-option>
+          </el-select>
+        </el-form-item>
+
+        <el-form-item label="*选择日志组">
+          <el-select v-model="form.group" filterable placeholder="请选择">
+            <el-option v-for="item in group" :label="item" :value="item"></el-option>
+          </el-select>
+        </el-form-item>
+
+        <el-form-item>
+          <el-button type="primary" @click="submitForm">下载</el-button>
+        </el-form-item>
+      </el-form>
+    </el-main>
+  </el-container>
+
+
+  <!-- 环状旋转器 -->
+  <div v-if="process" class="spinner-border" style="width: 4rem; height: 4rem;" role="status">
+    <span class="sr-only"></span>
+  </div>
+
+</div>
+
+
+<!-- 引入Vue.js -->
+<script src="{% static 'js/vue.js' %}"></script>
+
+<!-- 引入Element UI 的脚本文件 -->
+<script src="{% static 'js/index.js' %}"></script>
+
+<!-- 引入axios -->
+<script src="{% static 'js/axios.min.js' %}"></script>
+
+
+<script>
+
+  const vue = new Vue({
+    el: '#app',
+    data() {
+      return {
+        env: ["china dev", "china dev-staging", "china prod", "singapore-dev", "singapore-staging", "singapore-prod", "usa-prod"],
+        process: false,
+        group: [],
+        form: {
+          stime: '',
+          etime: '',
+          env: '',
+          group: '',
+          filterPattern: ''
+        }
+      };
+    },
+    mounted() {
+      document.getElementById("logDownLoad").classList.add("active"); // 激活左侧标签栏
+    },
+    methods: {
+      // 转换时间
+      timeconversion(date) {
+        const year = date.getFullYear(); // 年份
+        const month = (date.getMonth() + 1).toString().padStart(2, '0'); // 月份
+        const day = date.getDate().toString().padStart(2, '0'); // 日期
+        const hours = date.getHours().toString().padStart(2, '0'); // 小时
+        const minutes = date.getMinutes().toString().padStart(2, '0'); // 分钟
+        const seconds = date.getSeconds().toString().padStart(2, '0'); // 秒
+        return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`
+
+      },
+
+      // 点击下载
+      submitForm() {
+        const stime = this.timeconversion(this.form.stime)
+        const etime = this.timeconversion(this.form.etime)
+
+        // 设置旋转动画
+        this.process = true
+
+        axios.get('/aws/download?log_group_name=' + this.form.group + "&start_time=" + stime + "&end_time=" + etime + "&env=" + this.form.env + "&filterPattern=" + this.form.filterPattern, {
+          responseType: 'blob' // 设置响应类型为blob，以便处理文件
+        })
+          .then(response => {
+            // 取消旋转动画
+            this.process = false
+            // 创建一个新的Blob对象，并使用URL.createObjectURL()方法生成URL
+            const url = window.URL.createObjectURL(new Blob([response.data]));
+            // 创建一个<a>标签，设置href属性为生成的URL，然后模拟点击该链接来触发下载
+            const link = document.createElement('a');
+            link.href = url;
+            link.setAttribute('download', 'file.txt'); // 设置下载文件的文件名
+            document.body.appendChild(link);
+            link.click();
+
+          })
+          .catch(error => {
+            // 取消旋转动画
+            this.process = false
+            alert("下载文件失败。")
+            console.error('下载文件失败:', error);
+          });
+
+      },
+      // 环境变更，返回当前环境的cloudwatch列表
+      changeEnv() {
+        // 设置旋转动画
+        this.process = true
+        axios.get('/aws/get_env_group?env=' + this.form.env)
+          .then(response => {
+            this.group = response.data
+          })
+          .catch(error => {
+            alert("获取日志组数据失败")
+            console.error('获取日志组数据失败:', error);
+          })
+          .finally(response => {
+            // 取消旋转动画
+            this.process = false
+          });
+
+      }
+    }
+  });
+</script>
+
+
+
+{% endblock %}
