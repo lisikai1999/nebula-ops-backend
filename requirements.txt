@@ -1,0 +1,5 @@
+Django
+boto3
+pytz
+chromadb
+openai

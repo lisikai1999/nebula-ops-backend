@@ -34,4 +34,10 @@ urlpatterns = [
     path('reset_password/<str:id>', views.reset_password, name='reset_password'),
     path('disable_console/<str:id>', views.disable_console, name='disable_console'),
     path('get_cloudwatch_IncomingBytes', views.get_cloudwatch_IncomingBytes, name='get_cloudwatch_IncomingBytes'),
+    
+    path('athena/environments', views.get_athena_environments, name='athena_environments'),
+    path('athena/databases', views.get_athena_databases, name='athena_databases'),
+    path('athena/tables', views.get_athena_tables, name='athena_tables'),
+    path('athena/query', views.execute_athena_query, name='athena_query'),
+    path('athena/query_status', views.get_athena_query_status, name='athena_query_status'),
 ]
