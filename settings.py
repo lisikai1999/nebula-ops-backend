@@ -1,3 +1,5 @@
+# django管理员账密：test/123654
+
 # aws 用户名: 邮箱 字典
 emailList = {
     'test@test.com': 'test@test.com'    
