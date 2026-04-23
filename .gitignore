@@ -1,0 +1,120 @@
+# ======================================
+# 1. Python 通用忽略文件（所有Python项目必备）
+# ======================================
+# 字节码缓存
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 虚拟环境（绝对不能提交！）
+venv/
+env/
+ENV/
+.env/
+.venv/
+
+# 打包/构建文件
+*.so
+build/
+dist/
+downloads/
+eggs/
+.eggs/
+*.egg-info/
+*.egg
+.installed.cfg
+lib/
+lib64/
+parts/
+sdist/
+var/
+
+# Pip 依赖缓存
+pip-log.txt
+pip-delete-this-directory.txt
+*.pyc
+
+# ======================================
+# 2. Django 项目专用忽略（核心！）
+# ======================================
+# 本地SQLite数据库（开发环境数据库，不提交）
+db.sqlite3
+db.sqlite3-journal
+*.db
+
+# 环境变量/密钥/本地配置（绝对不能提交！）
+.env
+.env.local
+.env.*.local
+secrets.json
+settings_local.py
+config.json
+
+# 日志文件
+logs/
+*.log
+log/
+
+# 用户上传的媒体文件（生产环境静态资源，不提交）
+media/
+media_root/
+
+# Django collectstatic 生成的静态文件目录
+# 注意：源代码的静态文件夹(staticfiles/)不要忽略！
+static/
+
+# ======================================
+# 3. 编辑器 / IDE 配置文件
+# ======================================
+# VS Code
+.vscode/
+*.code-workspace
+.history/
+
+# PyCharm / IntelliJ
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# ======================================
+# 4. 操作系统自动生成的垃圾文件
+# ======================================
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+Desktop.ini
+
+# Linux
+*~
+
+# ======================================
+# 5. 测试 / 覆盖率文件
+# ======================================
+.coverage
+htmlcov/
+.pytest_cache/
+.nox/
+.tox/
+.benchmarks/
+
+# ======================================
+# 6. 其他临时文件
+# ======================================
+*.bak
+*.tmp
+*.swp
+
+settings.py
