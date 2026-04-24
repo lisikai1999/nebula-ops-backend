@@ -423,10 +423,140 @@ class ExecutionService:
             }
         
         elif action_type == 'wework_notification':
-            return {
-                'status': 'simulated',
-                'message': '企业微信通知模拟发送',
-            }
+            import requests
+            
+            webhook_url = config.get('webhookUrl')
+            if not webhook_url:
+                raise ValueError('企业微信 Webhook URL 未配置')
+            
+            message_type = config.get('messageType', 'text')
+            content = config.get('content', '')
+            title = config.get('title', '')
+            description = config.get('description', '')
+            url = config.get('url', '')
+            pic_url = config.get('picUrl', '')
+            mention_all = config.get('mentionAll', False)
+            mentions = config.get('mentions', [])
+            
+            if isinstance(mentions, str):
+                mentions = [m.strip() for m in mentions.split(',') if m.strip()]
+            
+            payload = {}
+            
+            if message_type == 'text':
+                payload = {
+                    'msgtype': 'text',
+                    'text': {
+                        'content': content
+                    }
+                }
+                if mention_all:
+                    payload['text']['mentioned_list'] = ['@all']
+                elif mentions:
+                    payload['text']['mentioned_list'] = mentions
+            
+            elif message_type == 'markdown':
+                payload = {
+                    'msgtype': 'markdown',
+                    'markdown': {
+                        'content': content
+                    }
+                }
+            
+            elif message_type == 'news':
+                articles = []
+                if title:
+                    article = {
+                        'title': title,
+                    }
+                    if description:
+                        article['description'] = description
+                    if url:
+                        article['url'] = url
+                    if pic_url:
+                        article['picurl'] = pic_url
+                    articles.append(article)
+                
+                payload = {
+                    'msgtype': 'news',
+                    'news': {
+                        'articles': articles
+                    }
+                }
+            
+            elif message_type == 'template_card':
+                template_card = {
+                    'card_type': 'text_notice',
+                }
+                if title:
+                    template_card['main_title'] = {
+                        'title': title
+                    }
+                if content:
+                    template_card['emphasis_content'] = {
+                        'title': content
+                    }
+                if description:
+                    template_card['sub_title_text'] = description
+                if url:
+                    template_card['jump_list'] = [
+                        {
+                            'type': 1,
+                            'url': url,
+                            'title': '查看详情'
+                        }
+                    ]
+                
+                payload = {
+                    'msgtype': 'template_card',
+                    'template_card': template_card
+                }
+            
+            else:
+                payload = {
+                    'msgtype': 'text',
+                    'text': {
+                        'content': content
+                    }
+                }
+            
+            try:
+                timeout = config.get('timeout', 30000) / 1000.0
+                response = requests.post(
+                    webhook_url,
+                    headers={'Content-Type': 'application/json'},
+                    json=payload,
+                    timeout=timeout
+                )
+                
+                response_data = response.json() if response.text else {}
+                
+                if response.status_code == 200 and response_data.get('errcode') == 0:
+                    return {
+                        'status': 'success',
+                        'message': '企业微信通知发送成功',
+                        'status_code': response.status_code,
+                        'response': response_data
+                    }
+                else:
+                    error_msg = response_data.get('errmsg', '未知错误')
+                    return {
+                        'status': 'failed',
+                        'message': f'企业微信通知发送失败: {error_msg}',
+                        'status_code': response.status_code,
+                        'response': response_data
+                    }
+                    
+            except requests.exceptions.Timeout:
+                return {
+                    'status': 'failed',
+                    'message': '企业微信通知发送超时'
+                }
+            except requests.exceptions.RequestException as e:
+                return {
+                    'status': 'failed',
+                    'message': f'企业微信通知发送请求异常: {str(e)}'
+                }
         
         elif action_type == 'custom_action':
             return {

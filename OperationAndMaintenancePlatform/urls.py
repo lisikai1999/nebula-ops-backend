@@ -25,7 +25,7 @@ urlpatterns = [
     path('index/', views.index),
     path('aws/', include('aws.urls')),
     path('ai/', include('ai.urls')),
-    path('api/workflow/', include('workflow.urls')),
+    path('workflow/', include('workflow.urls')),
      # 登录和登出视图
     # path('login/', views.login, name='login'),
     # path('logout/', views.logout, name='logout'),
