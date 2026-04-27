@@ -1,4 +1,5 @@
-# from django.db import models
+from django.db import models
+from django.utils import timezone
 import pytz
 import time
 import json
@@ -8,9 +9,144 @@ from email.mime.text import MIMEText
 from datetime import datetime, timedelta
 
 from utils import iam, logs, cloudwatch, ecs as ECS, route53, elbv2
-from settings import emailList, access_list, adminEmail, adminPassword, ccEmail, rdsSizeList
+from settings import emailList, adminEmail, adminPassword, ccEmail, rdsSizeList
 
 
+class AWSEnvironment(models.Model):
+    id = models.AutoField(primary_key=True)
+    name = models.CharField(max_length=100, unique=True, verbose_name='环境名称')
+    access_key_id = models.CharField(max_length=200, verbose_name='Access Key ID')
+    secret_access_key = models.CharField(max_length=200, verbose_name='Secret Access Key')
+    region = models.CharField(max_length=50, verbose_name='区域')
+    is_default = models.BooleanField(default=False, verbose_name='是否默认环境')
+    description = models.TextField(blank=True, default='', verbose_name='描述')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
+
+    class Meta:
+        db_table = 'aws_environments'
+        ordering = ['-created_at']
+        verbose_name = 'AWS环境凭证'
+        verbose_name_plural = 'AWS环境凭证'
+
+    def __str__(self):
+        return self.name
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'access_key_id': self.access_key_id,
+            'region': self.region,
+            'is_default': self.is_default,
+            'description': self.description,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+    def get_credentials(self):
+        return {
+            'env': self.name,
+            'region': self.region,
+            'access_key': self.access_key_id,
+            'secret_key': self.secret_access_key,
+            'login_url': '',
+        }
+
+
+class AWSEnvironmentService:
+    @staticmethod
+    def get_all_environments():
+        return list(AWSEnvironment.objects.all())
+
+    @staticmethod
+    def get_environment_by_id(env_id):
+        try:
+            return AWSEnvironment.objects.get(id=env_id)
+        except AWSEnvironment.DoesNotExist:
+            return None
+
+    @staticmethod
+    def get_default_environment():
+        try:
+            return AWSEnvironment.objects.get(is_default=True)
+        except AWSEnvironment.DoesNotExist:
+            return AWSEnvironment.objects.first()
+
+    @staticmethod
+    def get_access_list():
+        try:
+            environments = AWSEnvironment.objects.all()
+            if not environments:
+                from settings import access_list
+                return access_list
+            return [env.get_credentials() for env in environments]
+        except Exception:
+            from settings import access_list
+            return access_list
+
+    @staticmethod
+    def create_environment(data):
+        is_default = data.get('is_default', False)
+        
+        if is_default:
+            AWSEnvironment.objects.filter(is_default=True).update(is_default=False)
+        
+        environment = AWSEnvironment(
+            name=data['name'],
+            access_key_id=data['access_key_id'],
+            secret_access_key=data['secret_access_key'],
+            region=data['region'],
+            is_default=is_default,
+            description=data.get('description', ''),
+        )
+        environment.save()
+        return environment
+
+    @staticmethod
+    def update_environment(environment, data):
+        is_default = data.get('is_default', False)
+        
+        if is_default and not environment.is_default:
+            AWSEnvironment.objects.filter(is_default=True).update(is_default=False)
+        
+        if 'name' in data:
+            environment.name = data['name']
+        if 'access_key_id' in data:
+            environment.access_key_id = data['access_key_id']
+        if 'secret_access_key' in data and data['secret_access_key']:
+            environment.secret_access_key = data['secret_access_key']
+        if 'region' in data:
+            environment.region = data['region']
+        if 'is_default' in data:
+            environment.is_default = is_default
+        if 'description' in data:
+            environment.description = data['description']
+        
+        environment.save()
+        return environment
+
+    @staticmethod
+    def delete_environment(environment):
+        environment.delete()
+
+    @staticmethod
+    def set_default_environment(environment):
+        AWSEnvironment.objects.filter(is_default=True).update(is_default=False)
+        environment.is_default = True
+        environment.save()
+        return environment
+
+
+def get_access_list():
+    try:
+        return AWSEnvironmentService.get_access_list()
+    except Exception:
+        from settings import access_list
+        return access_list
+
+
+access_list = get_access_list()
 
 
 # 错误信息

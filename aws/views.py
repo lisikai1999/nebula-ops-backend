@@ -7,8 +7,10 @@ from django.contrib.auth import authenticate, login
 from django.contrib.auth.decorators import login_required
 
 from utils import iam
-from .models import AWSUser, AWSCloudWatch, AWSecs, AWSRoute53, AWSAthena
-from settings import emailList, access_list
+from .models import AWSUser, AWSCloudWatch, AWSecs, AWSRoute53, AWSAthena, AWSEnvironment, AWSEnvironmentService
+from settings import emailList
+
+access_list = AWSEnvironmentService.get_access_list()
 
 # 封装api接口
 def login_required_401(view_func):
@@ -350,5 +352,270 @@ def get_athena_query_status(request):
         return JsonResponse({
             "status": "error",
             "message": "获取查询状态失败",
+            "detail": str(e)
+        }, status=500)
+
+
+@login_required_401
+def get_environments(request):
+    """
+        获取所有 AWS 环境列表
+    """
+    try:
+        environments = AWSEnvironmentService.get_all_environments()
+        data = [env.to_dict() for env in environments]
+        return JsonResponse({
+            "status": "success",
+            "data": data
+        })
+    except Exception as e:
+        return JsonResponse({
+            "status": "error",
+            "message": "获取环境列表失败",
+            "detail": str(e)
+        }, status=500)
+
+
+@login_required_401
+def environments_list(request):
+    """
+        处理 GET (获取列表) 和 POST (创建) 请求
+    """
+    if request.method == 'GET':
+        return get_environments(request)
+    elif request.method == 'POST':
+        return create_environment(request)
+    else:
+        return JsonResponse({
+            "status": "error",
+            "message": "方法不允许",
+            "detail": "只支持 GET 和 POST 请求"
+        }, status=405)
+
+
+@login_required_401
+def environments_detail(request, env_id):
+    """
+        处理 PUT (更新) 和 DELETE (删除) 请求
+    """
+    if request.method == 'PUT':
+        return update_environment(request, env_id)
+    elif request.method == 'DELETE':
+        return delete_environment(request, env_id)
+    else:
+        return JsonResponse({
+            "status": "error",
+            "message": "方法不允许",
+            "detail": "只支持 PUT 和 DELETE 请求"
+        }, status=405)
+
+
+@login_required_401
+def create_environment(request):
+    """
+        创建新的 AWS 环境
+    """
+    if request.method != 'POST':
+        return JsonResponse({
+            "status": "error",
+            "message": "方法不允许",
+            "detail": "只支持 POST 请求"
+        }, status=405)
+    
+    try:
+        body = json.loads(request.body)
+        
+        name = body.get('name', '').strip()
+        access_key_id = body.get('access_key_id', '').strip()
+        secret_access_key = body.get('secret_access_key', '').strip()
+        region = body.get('region', '').strip()
+        is_default = body.get('is_default', False)
+        description = body.get('description', '').strip()
+        
+        if not name or not access_key_id or not secret_access_key or not region:
+            return JsonResponse({
+                "status": "error",
+                "message": "参数缺失",
+                "detail": "name, access_key_id, secret_access_key, region 是必需的"
+            }, status=400)
+        
+        if AWSEnvironment.objects.filter(name=name).exists():
+            return JsonResponse({
+                "status": "error",
+                "message": "环境名称已存在",
+                "detail": f"环境名称 '{name}' 已存在，请使用其他名称"
+            }, status=400)
+        
+        environment = AWSEnvironmentService.create_environment({
+            'name': name,
+            'access_key_id': access_key_id,
+            'secret_access_key': secret_access_key,
+            'region': region,
+            'is_default': is_default,
+            'description': description,
+        })
+        
+        global access_list
+        access_list = AWSEnvironmentService.get_access_list()
+        
+        return JsonResponse({
+            "status": "success",
+            "data": environment.to_dict()
+        })
+    except json.JSONDecodeError:
+        return JsonResponse({
+            "status": "error",
+            "message": "请求体格式错误",
+            "detail": "请提供有效的 JSON 格式"
+        }, status=400)
+    except Exception as e:
+        return JsonResponse({
+            "status": "error",
+            "message": "创建环境失败",
+            "detail": str(e)
+        }, status=500)
+
+
+@login_required_401
+def update_environment(request, env_id):
+    """
+        更新 AWS 环境
+    """
+    if request.method != 'PUT':
+        return JsonResponse({
+            "status": "error",
+            "message": "方法不允许",
+            "detail": "只支持 PUT 请求"
+        }, status=405)
+    
+    try:
+        environment = AWSEnvironmentService.get_environment_by_id(env_id)
+        if not environment:
+            return JsonResponse({
+                "status": "error",
+                "message": "环境不存在",
+                "detail": f"ID 为 {env_id} 的环境不存在"
+            }, status=404)
+        
+        body = json.loads(request.body)
+        
+        name = body.get('name', '').strip()
+        if name and name != environment.name:
+            if AWSEnvironment.objects.filter(name=name).exclude(id=env_id).exists():
+                return JsonResponse({
+                    "status": "error",
+                    "message": "环境名称已存在",
+                    "detail": f"环境名称 '{name}' 已存在，请使用其他名称"
+                }, status=400)
+        
+        update_data = {}
+        if name:
+            update_data['name'] = name
+        if 'access_key_id' in body and body['access_key_id']:
+            update_data['access_key_id'] = body['access_key_id'].strip()
+        if 'secret_access_key' in body:
+            update_data['secret_access_key'] = body['secret_access_key'].strip()
+        if 'region' in body and body['region']:
+            update_data['region'] = body['region'].strip()
+        if 'is_default' in body:
+            update_data['is_default'] = body['is_default']
+        if 'description' in body:
+            update_data['description'] = body['description'].strip()
+        
+        environment = AWSEnvironmentService.update_environment(environment, update_data)
+        
+        global access_list
+        access_list = AWSEnvironmentService.get_access_list()
+        
+        return JsonResponse({
+            "status": "success",
+            "data": environment.to_dict()
+        })
+    except json.JSONDecodeError:
+        return JsonResponse({
+            "status": "error",
+            "message": "请求体格式错误",
+            "detail": "请提供有效的 JSON 格式"
+        }, status=400)
+    except Exception as e:
+        return JsonResponse({
+            "status": "error",
+            "message": "更新环境失败",
+            "detail": str(e)
+        }, status=500)
+
+
+@login_required_401
+def delete_environment(request, env_id):
+    """
+        删除 AWS 环境
+    """
+    if request.method != 'DELETE':
+        return JsonResponse({
+            "status": "error",
+            "message": "方法不允许",
+            "detail": "只支持 DELETE 请求"
+        }, status=405)
+    
+    try:
+        environment = AWSEnvironmentService.get_environment_by_id(env_id)
+        if not environment:
+            return JsonResponse({
+                "status": "error",
+                "message": "环境不存在",
+                "detail": f"ID 为 {env_id} 的环境不存在"
+            }, status=404)
+        
+        AWSEnvironmentService.delete_environment(environment)
+        
+        global access_list
+        access_list = AWSEnvironmentService.get_access_list()
+        
+        return JsonResponse({
+            "status": "success",
+            "data": None
+        })
+    except Exception as e:
+        return JsonResponse({
+            "status": "error",
+            "message": "删除环境失败",
+            "detail": str(e)
+        }, status=500)
+
+
+@login_required_401
+def set_default_environment(request, env_id):
+    """
+        设置默认环境
+    """
+    if request.method != 'POST':
+        return JsonResponse({
+            "status": "error",
+            "message": "方法不允许",
+            "detail": "只支持 POST 请求"
+        }, status=405)
+    
+    try:
+        environment = AWSEnvironmentService.get_environment_by_id(env_id)
+        if not environment:
+            return JsonResponse({
+                "status": "error",
+                "message": "环境不存在",
+                "detail": f"ID 为 {env_id} 的环境不存在"
+            }, status=404)
+        
+        AWSEnvironmentService.set_default_environment(environment)
+        
+        global access_list
+        access_list = AWSEnvironmentService.get_access_list()
+        
+        return JsonResponse({
+            "status": "success",
+            "data": environment.to_dict()
+        })
+    except Exception as e:
+        return JsonResponse({
+            "status": "error",
+            "message": "设置默认环境失败",
             "detail": str(e)
         }, status=500)
