@@ -34,9 +34,9 @@ CORS_ORIGIN_WHITELIST = [
     "http://127.0.0.1:5173",
     "http://192.168.200.97:5000",
     "http://10.8.39.131:5000",
-    "http://10.12.18.184:5000"
-    "http://10.8.51.123"
-    
+    "http://10.12.18.184:5000",
+    "http://10.8.51.123",
+    "http://192.168.220.129:5000",
 ]
 
 CSRF_TRUSTED_ORIGINS = [
@@ -45,7 +45,8 @@ CSRF_TRUSTED_ORIGINS = [
     "http://192.168.200.97:5000",
     "http://10.8.39.131:5000",
     "http://10.12.18.184:5000",
-    "http://10.8.51.123"
+    "http://10.8.51.123",
+    "http://192.168.220.129:5000"
 ]
 
 # 确保会话 Cookie 可跨域传递
@@ -62,6 +63,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'workflow',
+    'aws',
 ]
 
 MIDDLEWARE = [
