@@ -10,7 +10,7 @@ from utils import iam
 from .models import (
     AWSUser, AWSCloudWatch, AWSecs, AWSRoute53, AWSAthena, 
     AWSEnvironment, AWSEnvironmentService, get_access_list,
-    DevOpsIncident, DevOpsIncidentService
+    DevOpsIncident, DevOpsIncidentService, DevOpsDiagnosisService
 )
 from settings import emailList
 
@@ -701,6 +701,11 @@ def devops_incident_list(request):
                     'background': background,
                     'description': description
                 }
+            )
+            
+            DevOpsDiagnosisService.start_async_diagnosis(
+                incident_id=incident.id,
+                environment_id=environment_id
             )
             
             return JsonResponse({

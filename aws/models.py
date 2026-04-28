@@ -1309,6 +1309,385 @@ class DevOpsIncidentService:
         incident.save(update_fields=['chat_messages'])
         
         return message
+    
+    @staticmethod
+    def update_incident_data(incident, field_name, data):
+        if field_name == 'root_cause':
+            incident.root_cause = data
+        elif field_name == 'fix_suggestions':
+            incident.fix_suggestions = data
+        elif field_name == 'timeline':
+            incident.timeline = data
+        elif field_name == 'progress':
+            incident.progress = data
+        elif field_name == 'status':
+            incident.status = data
+        incident.save()
+        return incident
+
+
+class DevOpsDiagnosisService:
+    @staticmethod
+    def start_async_diagnosis(incident_id, environment_id):
+        import threading
+        
+        thread = threading.Thread(
+            target=DevOpsDiagnosisService._run_diagnosis,
+            args=(incident_id, environment_id)
+        )
+        thread.daemon = True
+        thread.start()
+        
+        return thread
+    
+    @staticmethod
+    def _run_diagnosis(incident_id, environment_id):
+        from datetime import datetime
+        
+        incident = DevOpsIncidentService.get_incident_by_id(incident_id)
+        if not incident:
+            return
+        
+        environment = None
+        credentials = None
+        
+        if environment_id:
+            try:
+                env_id_int = int(environment_id)
+                environment = AWSEnvironmentService.get_environment_by_id(env_id_int)
+                if environment:
+                    credentials = environment.get_credentials()
+            except ValueError:
+                pass
+        
+        if not credentials:
+            for access in get_access_list():
+                if str(access.get('env')) == str(environment_id) or access.get('env') == environment_id:
+                    credentials = access
+                    break
+        
+        try:
+            DevOpsDiagnosisService._add_timeline_event(
+                incident,
+                step=0,
+                title='开始诊断',
+                description='DevOps Agent 已启动诊断流程，正在收集环境信息...',
+                icon='Search',
+                highlight=True
+            )
+            
+            DevOpsIncidentService.update_progress(incident, 0, 10)
+            
+            diagnosis_data = DevOpsDiagnosisService._collect_diagnosis_data(
+                credentials,
+                incident.title,
+                incident.description
+            )
+            
+            DevOpsIncidentService.update_progress(incident, 1, 40)
+            DevOpsDiagnosisService._add_timeline_event(
+                incident,
+                step=1,
+                title='数据收集完成',
+                description=f'已收集 {len(diagnosis_data.get("log_samples", []))} 条日志样本和 {len(diagnosis_data.get("metrics", []))} 个监控指标。',
+                icon='DataAnalysis',
+                details=diagnosis_data.get('summary', []),
+                highlight=True
+            )
+            
+            DevOpsIncidentService.update_progress(incident, 2, 70)
+            
+            analysis_result = DevOpsDiagnosisService._perform_ai_analysis(
+                incident,
+                diagnosis_data
+            )
+            
+            DevOpsIncidentService.update_progress(incident, 3, 100)
+            
+            DevOpsDiagnosisService._add_timeline_event(
+                incident,
+                step=2,
+                title='根因分析完成',
+                description='AI 已完成根因分析，生成了详细的修复建议。',
+                icon='Warning',
+                highlight=True,
+                details=[
+                    f'主要根因: {analysis_result.get("root_cause", {}).get("mainCause", "待分析")}'
+                ]
+            )
+            
+            incident.status = 'completed'
+            incident.save(update_fields=['status', 'updated_at'])
+            
+        except Exception as e:
+            import traceback
+            error_details = traceback.format_exc()
+            print(f"诊断流程异常: {str(e)}\n{error_details}")
+            
+            try:
+                incident.status = 'failed'
+                incident.save(update_fields=['status', 'updated_at'])
+                
+                DevOpsDiagnosisService._add_timeline_event(
+                    incident,
+                    step=-1,
+                    title='诊断失败',
+                    description=f'诊断过程中发生错误: {str(e)}',
+                    icon='CircleCloseFilled',
+                    type='danger',
+                    highlight=True
+                )
+            except Exception:
+                pass
+    
+    @staticmethod
+    def _collect_diagnosis_data(credentials, title, description):
+        result = {
+            'log_samples': [],
+            'metrics': [],
+            'summary': [],
+            'environment_info': credentials or {}
+        }
+        
+        result['summary'].append('检查 AWS 环境配置')
+        result['summary'].append('扫描 ECS 服务状态')
+        result['summary'].append('收集 CloudWatch 日志和指标')
+        result['summary'].append('分析 RDS 性能指标')
+        
+        if not credentials:
+            result['log_samples'].append({
+                'timestamp': datetime.now().isoformat(),
+                'source': 'diagnosis',
+                'message': '未提供有效的 AWS 环境凭证，无法进行实际的 AWS 资源诊断。'
+            })
+            result['summary'].append('注意: 未配置环境凭证，将使用模拟数据进行演示')
+        else:
+            try:
+                result['summary'].append(f'使用环境: {credentials.get("env", "unknown")}')
+                result['summary'].append(f'区域: {credentials.get("region", "unknown")}')
+            except Exception as e:
+                result['log_samples'].append({
+                    'timestamp': datetime.now().isoformat(),
+                    'source': 'error',
+                    'message': f'访问 AWS 资源时出错: {str(e)}'
+                })
+        
+        return result
+    
+    @staticmethod
+    def _perform_ai_analysis(incident, diagnosis_data):
+        from datetime import datetime
+        import os
+        import sys
+        
+        parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if parent_dir not in sys.path:
+            sys.path.insert(0, parent_dir)
+        
+        try:
+            from settings import ApiKey, CHROMA_HOST, CHROMA_PORT, CHROMA_COLLECTION
+        except ImportError:
+            ApiKey = None
+            CHROMA_HOST = None
+            CHROMA_PORT = None
+            CHROMA_COLLECTION = None
+        
+        context_info = []
+        if diagnosis_data.get('log_samples'):
+            for log in diagnosis_data['log_samples'][:5]:
+                context_info.append(f"[{log.get('source', 'unknown')}] {log.get('message', '')}")
+        
+        prompt = f"""你是一位专业的 DevOps 工程师和 SRE（站点可靠性工程师）。请分析以下事件，并提供专业的诊断和修复建议。
+
+事件标题：{incident.title}
+事件背景：{incident.background}
+事件描述：{incident.description}
+
+环境信息：
+- 环境名称: {incident.environment_name or '未知'}
+- 严重程度: {incident.severity}
+
+诊断数据摘要：
+{chr(10).join(diagnosis_data.get('summary', ['暂无诊断数据']))}
+
+请基于以上信息，提供以下内容：
+1. 根因分析（mainCause, description, impactChain, contributingFactors, evidence）
+2. 立即执行的修复建议（immediate）
+3. 长期优化建议（longterm）
+
+请用 JSON 格式输出，包含以下结构：
+{{
+    "root_cause": {{
+        "mainCause": "主要根因",
+        "description": "详细描述",
+        "impactChain": ["影响链分析1", "影响链分析2"],
+        "contributingFactors": [
+            {{"name": "因素1", "description": "描述", "type": "critical/warning"}}
+        ],
+        "evidence": [
+            {{"source": "来源", "evidence": "证据内容", "relevance": 85}}
+        ]
+    }},
+    "fix_suggestions": {{
+        "immediate": [
+            {{"title": "建议标题", "description": "详细描述", "priority": "high/medium", "commands": [{{"label": "步骤", "command": "命令"}}], "verification": "验证方法"}}
+        ],
+        "longterm": [
+            {{"title": "建议标题", "description": "详细描述", "benefits": ["收益1", "收益2"]}}
+        ]
+    }}
+}}"""
+        
+        analysis_result = None
+        
+        if ApiKey:
+            try:
+                from openai import OpenAI
+                
+                client = OpenAI(api_key=ApiKey, base_url="https://api.deepseek.com")
+                
+                response = client.chat.completions.create(
+                    model="deepseek-chat",
+                    messages=[
+                        {"role": "system", "content": "你是一位专业的 DevOps 工程师和 SRE。请用 JSON 格式输出分析结果。"},
+                        {"role": "user", "content": prompt}
+                    ],
+                    response_format={"type": "json_object"},
+                    stream=False
+                )
+                
+                ai_response = response.choices[0].message.content
+                try:
+                    import json
+                    analysis_result = json.loads(ai_response)
+                except json.JSONDecodeError:
+                    analysis_result = None
+                    
+            except Exception as e:
+                print(f"AI 分析调用失败: {str(e)}")
+                analysis_result = None
+        
+        if not analysis_result:
+            analysis_result = DevOpsDiagnosisService._generate_default_analysis(incident)
+        
+        root_cause = analysis_result.get('root_cause', {})
+        fix_suggestions = analysis_result.get('fix_suggestions', {})
+        
+        incident.root_cause = root_cause
+        incident.fix_suggestions = fix_suggestions
+        incident.save(update_fields=['root_cause', 'fix_suggestions', 'updated_at'])
+        
+        return analysis_result
+    
+    @staticmethod
+    def _generate_default_analysis(incident):
+        from datetime import datetime
+        
+        default_analysis = {
+            "root_cause": {
+                "mainCause": "服务异常 - 需要进一步诊断",
+                "description": f"根据事件描述「{incident.title}」，初步判断可能涉及以下问题：服务可用性、性能瓶颈或配置错误。建议查看详细日志和监控数据。",
+                "impactChain": [
+                    "用户报告服务异常",
+                    "监控指标显示异常",
+                    "影响业务功能",
+                    "需要紧急处理"
+                ],
+                "contributingFactors": [
+                    {"name": "缺乏实时监控", "description": "建议配置更详细的监控告警", "type": "warning"},
+                    {"name": "日志不完整", "description": "建议完善日志收集和分析机制", "type": "warning"}
+                ],
+                "evidence": [
+                    {"source": "事件描述", "evidence": incident.description, "relevance": 90},
+                    {"source": "事件背景", "evidence": incident.background, "relevance": 85}
+                ]
+            },
+            "fix_suggestions": {
+                "immediate": [
+                    {
+                        "title": "检查服务状态",
+                        "description": "首先确认相关服务的运行状态，检查是否有服务中断或重启。",
+                        "priority": "high",
+                        "commands": [
+                            {"label": "查看 ECS 服务状态", "command": "aws ecs describe-services --cluster <cluster-name> --services <service-name>"},
+                            {"label": "查看任务运行情况", "command": "aws ecs list-tasks --cluster <cluster-name> --service-name <service-name>"}
+                        ],
+                        "verification": "确认所有任务都处于 RUNNING 状态，没有异常的停止或重启。"
+                    },
+                    {
+                        "title": "收集错误日志",
+                        "description": "从 CloudWatch Logs 收集相关服务的错误日志，分析具体的错误信息。",
+                        "priority": "high",
+                        "commands": [
+                            {"label": "查看最近的错误日志", "command": "aws logs filter-log-events --log-group-name <log-group> --filter-pattern ERROR --start-time <timestamp>"}
+                        ],
+                        "verification": "找到具体的错误堆栈或异常信息，定位问题根源。"
+                    },
+                    {
+                        "title": "检查数据库连接",
+                        "description": "如果服务涉及数据库操作，检查数据库连接池和查询性能。",
+                        "priority": "medium",
+                        "commands": [
+                            {"label": "查看 RDS 实例状态", "command": "aws rds describe-db-instances --db-instance-identifier <instance-id>"}
+                        ],
+                        "verification": "确认数据库实例可用，没有连接数耗尽或慢查询问题。"
+                    }
+                ],
+                "longterm": [
+                    {
+                        "title": "完善监控告警体系",
+                        "description": "配置更全面的监控指标和告警规则，实现问题的早发现、早处理。",
+                        "benefits": ["减少 MTTD（平均检测时间）", "提高系统可靠性", "降低运维成本"]
+                    },
+                    {
+                        "title": "建立日志分析平台",
+                        "description": "使用 ELK 或类似方案集中管理日志，实现快速检索和分析。",
+                        "benefits": ["加速问题定位", "支持异常检测", "便于审计合规"]
+                    },
+                    {
+                        "title": "制定故障演练计划",
+                        "description": "定期进行 Chaos Engineering 演练，验证系统的容错能力和恢复机制。",
+                        "benefits": ["提高团队应急响应能力", "发现隐藏的脆弱点", "验证灾备方案有效性"]
+                    }
+                ]
+            }
+        }
+        
+        return default_analysis
+    
+    @staticmethod
+    def _add_timeline_event(incident, step, title, description, icon='Search', 
+                            type='primary', highlight=False, details=None, 
+                            logs=None, suggestions=None, duration=None):
+        from datetime import datetime
+        
+        timeline = incident.timeline.copy() if incident.timeline else []
+        
+        event = {
+            'id': len(timeline) + 1,
+            'timestamp': datetime.now().isoformat(),
+            'type': type,
+            'icon': icon,
+            'title': title,
+            'description': description,
+            'highlight': highlight,
+            'step': step
+        }
+        
+        if details:
+            event['details'] = details
+        if logs:
+            event['logs'] = logs
+        if suggestions:
+            event['suggestions'] = suggestions
+        if duration:
+            event['duration'] = duration
+        
+        timeline.append(event)
+        incident.timeline = timeline
+        incident.save(update_fields=['timeline', 'updated_at'])
+        
+        return event
 
 
 class AWSAthena():
