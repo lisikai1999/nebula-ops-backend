@@ -1065,6 +1065,252 @@ class AWSElbV2():
     pass
 
 
+def generate_incident_id():
+    import time
+    import uuid
+    return f"incident_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"
+
+
+INCIDENT_STATUS_CHOICES = [
+    ('investigating', '调查中'),
+    ('completed', '已完成'),
+    ('closed', '已关闭'),
+    ('cancelled', '已取消'),
+    ('failed', '失败'),
+]
+
+INCIDENT_SEVERITY_CHOICES = [
+    ('critical', '严重'),
+    ('high', '高'),
+    ('medium', '中'),
+    ('low', '低'),
+]
+
+
+class DevOpsIncident(models.Model):
+    id = models.CharField(max_length=100, primary_key=True, default=generate_incident_id)
+    incident_id = models.CharField(max_length=100, unique=True, verbose_name='事件ID')
+    title = models.CharField(max_length=255, verbose_name='调查标题')
+    status = models.CharField(max_length=20, choices=INCIDENT_STATUS_CHOICES, default='investigating', verbose_name='状态')
+    severity = models.CharField(max_length=20, choices=INCIDENT_SEVERITY_CHOICES, default='high', verbose_name='严重程度')
+    
+    environment_id = models.CharField(max_length=100, null=True, blank=True, verbose_name='环境ID')
+    environment_name = models.CharField(max_length=100, null=True, blank=True, verbose_name='环境名称')
+    
+    background = models.TextField(verbose_name='事件背景')
+    description = models.TextField(verbose_name='事件说明')
+    
+    progress = models.JSONField(default=dict, verbose_name='调查进度')
+    timeline = models.JSONField(default=list, verbose_name='推理时间线')
+    root_cause = models.JSONField(default=dict, verbose_name='根因分析')
+    fix_suggestions = models.JSONField(default=dict, verbose_name='修复建议')
+    chat_messages = models.JSONField(default=list, verbose_name='对话消息')
+    
+    occurred_at = models.DateTimeField(auto_now_add=True, verbose_name='发生时间')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
+    completed_at = models.DateTimeField(null=True, blank=True, verbose_name='完成时间')
+    
+    user = models.ForeignKey('auth.User', on_delete=models.CASCADE, related_name='devops_incidents', null=True, blank=True)
+    
+    class Meta:
+        db_table = 'devops_incidents'
+        ordering = ['-created_at']
+        verbose_name = 'DevOps事件调查'
+        verbose_name_plural = 'DevOps事件调查'
+    
+    def save(self, *args, **kwargs):
+        if not self.incident_id:
+            self.incident_id = generate_incident_id()
+        if not self.progress:
+            self.progress = {
+                'currentStep': 0,
+                'percentage': 0,
+                'steps': [
+                    {'status': '进行中', 'icon': 'Loading', 'iconClass': 'processing'},
+                    {'status': '待处理', 'icon': 'Timer', 'iconClass': 'pending'},
+                    {'status': '待处理', 'icon': 'Timer', 'iconClass': 'pending'}
+                ]
+            }
+        super().save(*args, **kwargs)
+    
+    def to_dict(self):
+        from datetime import datetime
+        return {
+            'id': self.id,
+            'incidentId': self.incident_id,
+            'title': self.title,
+            'status': self.status,
+            'severity': self.severity,
+            'environmentId': self.environment_id,
+            'environmentName': self.environment_name,
+            'background': self.background,
+            'description': self.description,
+            'progress': self.progress,
+            'timeline': self.timeline,
+            'rootCause': self.root_cause,
+            'fixSuggestions': self.fix_suggestions,
+            'chatMessages': self.chat_messages,
+            'occurredAt': self.occurred_at.isoformat() if self.occurred_at else None,
+            'createdAt': self.created_at.isoformat() if self.created_at else None,
+            'updatedAt': self.updated_at.isoformat() if self.updated_at else None,
+            'completedAt': self.completed_at.isoformat() if self.completed_at else None,
+            'affectedService': self.environment_name or '-',
+        }
+
+
+class DevOpsIncidentService:
+    @staticmethod
+    def get_user_incidents(user, filters=None, page=1, page_size=10):
+        filters = filters or {}
+        queryset = DevOpsIncident.objects.all()
+        
+        if user:
+            queryset = queryset.filter(user=user)
+        
+        if filters.get('status'):
+            queryset = queryset.filter(status=filters['status'])
+        
+        if filters.get('severity'):
+            queryset = queryset.filter(severity=filters['severity'])
+        
+        if filters.get('environment_id'):
+            queryset = queryset.filter(environment_id=filters['environment_id'])
+        
+        if filters.get('keyword'):
+            keyword = filters['keyword']
+            queryset = queryset.filter(
+                models.Q(title__icontains=keyword) |
+                models.Q(description__icontains=keyword) |
+                models.Q(background__icontains=keyword)
+            )
+        
+        total = queryset.count()
+        
+        start = (page - 1) * page_size
+        end = start + page_size
+        incidents = queryset[start:end]
+        
+        return {
+            'incidents': [inc.to_dict() for inc in incidents],
+            'total': total,
+            'page': page,
+            'page_size': page_size
+        }
+    
+    @staticmethod
+    def get_incident_by_id(incident_id, user=None):
+        try:
+            incident = DevOpsIncident.objects.get(
+                models.Q(id=incident_id) | models.Q(incident_id=incident_id)
+            )
+            if user and incident.user and incident.user != user:
+                return None
+            return incident
+        except DevOpsIncident.DoesNotExist:
+            return None
+    
+    @staticmethod
+    def create_incident(user, data):
+        incident = DevOpsIncident(
+            user=user,
+            title=data.get('title', ''),
+            severity=data.get('severity', 'high'),
+            environment_id=data.get('environment_id'),
+            environment_name=data.get('environment_name'),
+            background=data.get('background', ''),
+            description=data.get('description', ''),
+            status='investigating',
+        )
+        incident.save()
+        
+        DevOpsIncidentService._initialize_timeline(incident)
+        
+        return incident
+    
+    @staticmethod
+    def _initialize_timeline(incident):
+        from datetime import datetime
+        
+        initial_timeline = [
+            {
+                'id': 1,
+                'timestamp': datetime.now().isoformat(),
+                'type': 'primary',
+                'icon': 'Search',
+                'title': '调查启动',
+                'description': 'DevOps Agent 已接收到调查请求，开始进行事件分析。',
+                'highlight': True,
+                'details': [
+                    '检查相关服务状态',
+                    '收集最近的日志和监控数据',
+                    '分析可能的故障模式'
+                ]
+            }
+        ]
+        
+        incident.timeline = initial_timeline
+        incident.save(update_fields=['timeline'])
+    
+    @staticmethod
+    def update_progress(incident, step, percentage):
+        progress = incident.progress.copy() if incident.progress else {}
+        progress['currentStep'] = step
+        progress['percentage'] = percentage
+        
+        steps = progress.get('steps', [
+            {'status': '待处理', 'icon': 'Timer', 'iconClass': 'pending'},
+            {'status': '待处理', 'icon': 'Timer', 'iconClass': 'pending'},
+            {'status': '待处理', 'icon': 'Timer', 'iconClass': 'pending'}
+        ])
+        
+        for i in range(len(steps)):
+            if i < step:
+                steps[i] = {'status': '已完成', 'icon': 'CircleCheck', 'iconClass': 'completed'}
+            elif i == step:
+                steps[i] = {'status': '进行中', 'icon': 'Loading', 'iconClass': 'processing'}
+            else:
+                steps[i] = {'status': '待处理', 'icon': 'Timer', 'iconClass': 'pending'}
+        
+        progress['steps'] = steps
+        incident.progress = progress
+        incident.save(update_fields=['progress'])
+    
+    @staticmethod
+    def cancel_incident(incident):
+        if incident.status not in ['investigating']:
+            return False
+        
+        incident.status = 'cancelled'
+        incident.save(update_fields=['status', 'updated_at'])
+        return True
+    
+    @staticmethod
+    def add_chat_message(incident, role, content, msg_type='normal', title=None, details=None, suggestion=None):
+        from datetime import datetime
+        
+        message = {
+            'role': role,
+            'content': content,
+            'time': datetime.now().strftime('%H:%M:%S'),
+            'type': msg_type
+        }
+        
+        if title:
+            message['title'] = title
+        if details:
+            message['details'] = details
+        if suggestion:
+            message['suggestion'] = suggestion
+        
+        chat_messages = incident.chat_messages.copy() if incident.chat_messages else []
+        chat_messages.append(message)
+        incident.chat_messages = chat_messages
+        incident.save(update_fields=['chat_messages'])
+        
+        return message
+
+
 class AWSAthena():
     """
         Athena 相关

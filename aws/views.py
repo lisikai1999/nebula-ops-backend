@@ -7,7 +7,11 @@ from django.contrib.auth import authenticate, login
 from django.contrib.auth.decorators import login_required
 
 from utils import iam
-from .models import AWSUser, AWSCloudWatch, AWSecs, AWSRoute53, AWSAthena, AWSEnvironment, AWSEnvironmentService, get_access_list
+from .models import (
+    AWSUser, AWSCloudWatch, AWSecs, AWSRoute53, AWSAthena, 
+    AWSEnvironment, AWSEnvironmentService, get_access_list,
+    DevOpsIncident, DevOpsIncidentService
+)
 from settings import emailList
 
 
@@ -604,5 +608,276 @@ def set_default_environment(request, env_id):
         return JsonResponse({
             "status": "error",
             "message": "设置默认环境失败",
+            "detail": str(e)
+        }, status=500)
+
+
+@login_required_401
+def devops_incident_list(request):
+    """
+        DevOps 事件调查列表接口
+        GET /api/aws/devops-incident - 获取事件调查列表
+        POST /api/aws/devops-incident - 创建新的事件调查
+    """
+    if request.method == 'GET':
+        try:
+            status = request.GET.get('status', None)
+            severity = request.GET.get('severity', None)
+            environment_id = request.GET.get('environment_id', None)
+            keyword = request.GET.get('keyword', None)
+            page = int(request.GET.get('page', 1))
+            page_size = int(request.GET.get('page_size', 10))
+            
+            filters = {}
+            if status:
+                filters['status'] = status
+            if severity:
+                filters['severity'] = severity
+            if environment_id:
+                filters['environment_id'] = environment_id
+            if keyword:
+                filters['keyword'] = keyword
+            
+            result = DevOpsIncidentService.get_user_incidents(
+                user=None,
+                filters=filters,
+                page=page,
+                page_size=page_size
+            )
+            
+            return JsonResponse({
+                "status": "success",
+                "data": result['incidents'],
+                "total": result['total'],
+                "page": result['page'],
+                "page_size": result['page_size']
+            })
+        except Exception as e:
+            return JsonResponse({
+                "status": "error",
+                "message": "获取事件调查列表失败",
+                "detail": str(e)
+            }, status=500)
+    
+    elif request.method == 'POST':
+        try:
+            body = json.loads(request.body)
+            
+            title = body.get('title', '').strip()
+            severity = body.get('severity', 'high')
+            environment_id = body.get('environment_id')
+            environment_name = body.get('environment_name', '')
+            background = body.get('background', '').strip()
+            description = body.get('description', '').strip()
+            
+            if not title:
+                return JsonResponse({
+                    "status": "error",
+                    "message": "参数缺失",
+                    "detail": "title 参数是必需的"
+                }, status=400)
+            
+            if not background or len(background) < 10:
+                return JsonResponse({
+                    "status": "error",
+                    "message": "参数缺失",
+                    "detail": "background 参数至少需要 10 个字符"
+                }, status=400)
+            
+            if not description or len(description) < 10:
+                return JsonResponse({
+                    "status": "error",
+                    "message": "参数缺失",
+                    "detail": "description 参数至少需要 10 个字符"
+                }, status=400)
+            
+            incident = DevOpsIncidentService.create_incident(
+                user=request.user,
+                data={
+                    'title': title,
+                    'severity': severity,
+                    'environment_id': environment_id,
+                    'environment_name': environment_name,
+                    'background': background,
+                    'description': description
+                }
+            )
+            
+            return JsonResponse({
+                "status": "success",
+                "data": incident.to_dict()
+            })
+        except json.JSONDecodeError:
+            return JsonResponse({
+                "status": "error",
+                "message": "请求体格式错误",
+                "detail": "请提供有效的 JSON 格式"
+            }, status=400)
+        except Exception as e:
+            return JsonResponse({
+                "status": "error",
+                "message": "创建事件调查失败",
+                "detail": str(e)
+            }, status=500)
+    
+    else:
+        return JsonResponse({
+            "status": "error",
+            "message": "方法不允许",
+            "detail": "只支持 GET 和 POST 请求"
+        }, status=405)
+
+
+@login_required_401
+def devops_incident_detail(request, incident_id):
+    """
+        DevOps 事件调查详情接口
+        GET /api/aws/devops-incident/{id} - 获取事件调查详情
+    """
+    if request.method != 'GET':
+        return JsonResponse({
+            "status": "error",
+            "message": "方法不允许",
+            "detail": "只支持 GET 请求"
+        }, status=405)
+    
+    try:
+        incident = DevOpsIncidentService.get_incident_by_id(incident_id, user=None)
+        
+        if not incident:
+            return JsonResponse({
+                "status": "error",
+                "message": "事件调查不存在",
+                "detail": f"ID 为 {incident_id} 的事件调查不存在"
+            }, status=404)
+        
+        return JsonResponse({
+            "status": "success",
+            "data": incident.to_dict()
+        })
+    except Exception as e:
+        return JsonResponse({
+            "status": "error",
+            "message": "获取事件调查详情失败",
+            "detail": str(e)
+        }, status=500)
+
+
+@login_required_401
+def devops_incident_cancel(request, incident_id):
+    """
+        取消事件调查
+        POST /api/aws/devops-incident/{id}/cancel
+    """
+    if request.method != 'POST':
+        return JsonResponse({
+            "status": "error",
+            "message": "方法不允许",
+            "detail": "只支持 POST 请求"
+        }, status=405)
+    
+    try:
+        incident = DevOpsIncidentService.get_incident_by_id(incident_id, user=None)
+        
+        if not incident:
+            return JsonResponse({
+                "status": "error",
+                "message": "事件调查不存在",
+                "detail": f"ID 为 {incident_id} 的事件调查不存在"
+            }, status=404)
+        
+        success = DevOpsIncidentService.cancel_incident(incident)
+        
+        if not success:
+            return JsonResponse({
+                "status": "error",
+                "message": "无法取消",
+                "detail": "当前状态的事件调查无法取消"
+            }, status=400)
+        
+        return JsonResponse({
+            "status": "success",
+            "data": incident.to_dict()
+        })
+    except Exception as e:
+        return JsonResponse({
+            "status": "error",
+            "message": "取消事件调查失败",
+            "detail": str(e)
+        }, status=500)
+
+
+@login_required_401
+def devops_incident_export(request, incident_id):
+    """
+        导出事件调查报告
+        GET /api/aws/devops-incident/{id}/export
+    """
+    if request.method != 'GET':
+        return JsonResponse({
+            "status": "error",
+            "message": "方法不允许",
+            "detail": "只支持 GET 请求"
+        }, status=405)
+    
+    try:
+        incident = DevOpsIncidentService.get_incident_by_id(incident_id, user=None)
+        
+        if not incident:
+            return JsonResponse({
+                "status": "error",
+                "message": "事件调查不存在",
+                "detail": f"ID 为 {incident_id} 的事件调查不存在"
+            }, status=404)
+        
+        from datetime import datetime
+        from io import BytesIO
+        
+        report_content = f"""DevOps 事件调查报告
+======================
+
+事件ID: {incident.incident_id}
+标题: {incident.title}
+状态: {incident.status}
+严重程度: {incident.severity}
+环境: {incident.environment_name or '-'}
+
+事件背景:
+{incident.background}
+
+事件说明:
+{incident.description}
+
+调查进度:
+当前步骤: {incident.progress.get('currentStep', 0)}
+进度: {incident.progress.get('percentage', 0)}%
+
+根因分析:
+{incident.root_cause.get('mainCause', '待分析')}
+{incident.root_cause.get('description', '')}
+
+修复建议:
+立即执行:
+{chr(10).join([f"- {s.get('title', '')}" for s in incident.fix_suggestions.get('immediate', [])])}
+
+长期优化:
+{chr(10).join([f"- {s.get('title', '')}" for s in incident.fix_suggestions.get('longterm', [])])}
+
+生成时间: {datetime.now().isoformat()}
+"""
+        
+        buffer = BytesIO()
+        buffer.write(report_content.encode('utf-8'))
+        buffer.seek(0)
+        
+        response = HttpResponse(buffer.getvalue(), content_type='text/plain; charset=utf-8')
+        response['Content-Disposition'] = f'attachment; filename=incident_{incident_id}_{datetime.now().strftime("%Y%m%d")}.txt'
+        response["Access-Control-Expose-Headers"] = "Content-Disposition"
+        
+        return response
+    except Exception as e:
+        return JsonResponse({
+            "status": "error",
+            "message": "导出事件调查报告失败",
             "detail": str(e)
         }, status=500)
