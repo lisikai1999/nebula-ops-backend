@@ -822,7 +822,7 @@ class AWSUser():
         """
         result = []
         for access in get_access_list():
-            if access['env'] == 'china dev-staging' or access['env'] == 'china prod':
+            if access['env'] == 'china-dev' or access['env'] == 'china-prod':
                 p = iam.proc(access['region'], access['access_key'], access['secret_key'])
                 result += userNoLogin(p, access['login_url'], access['env'], 42)
 
