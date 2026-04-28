@@ -142,11 +142,8 @@ def get_access_list():
     try:
         return AWSEnvironmentService.get_access_list()
     except Exception:
-        from settings import access_list
-        return access_list
-
-
-access_list = get_access_list()
+        from settings import access_list as fallback_access_list
+        return fallback_access_list
 
 
 # 错误信息
@@ -719,7 +716,7 @@ def search_all_log_group(env):
     """
     result = []
     # 判断遍历哪个环境
-    for index, item in enumerate(access_list):
+    for index, item in enumerate(get_access_list()):
         if item["env"] == env:
             logs_client = logs.proc(region=item["region"],access_key=item["access_key"],secret_key=item["secret_key"])
             result = logs_client.get_cloudwatch_log_group_name()
@@ -732,7 +729,7 @@ def get_metric_data_IncomingBytes(days, PeriodDay):
         PeriodDay: 指标聚合天数
     """
     result = []
-    for index, item in enumerate(access_list):
+    for index, item in enumerate(get_access_list()):
         # 获取IncomingBytes指标数据
         now = datetime.now()
 
@@ -774,7 +771,7 @@ def list_zone_id(env):
     """
     result = []
     # 判断遍历哪个环境
-    for index, item in enumerate(access_list):
+    for index, item in enumerate(get_access_list()):
         if item["env"] == env:
             logs_client = route53.proc(region=item["region"],access_key=item["access_key"],secret_key=item["secret_key"])
             response = logs_client.list_hosted_zones()
@@ -792,7 +789,7 @@ def get_record(env, ZoneId):
         搜索某个环境zone的域名路径
     """
     # 判断遍历哪个环境
-    for index, item in enumerate(access_list):
+    for index, item in enumerate(get_access_list()):
         if item["env"] == env:
             logs_client = route53.proc(region=item["region"],access_key=item["access_key"],secret_key=item["secret_key"])
             response = logs_client.get_all_A_resource_record(ZoneId)
@@ -824,7 +821,7 @@ class AWSUser():
             获取用户信息
         """
         result = []
-        for access in access_list:
+        for access in get_access_list():
             if access['env'] == 'china dev-staging' or access['env'] == 'china prod':
                 p = iam.proc(access['region'], access['access_key'], access['secret_key'])
                 result += userNoLogin(p, access['login_url'], access['env'], 42)
@@ -859,7 +856,7 @@ class AWSCloudWatch():
         line = 2000000     # 文件最大行数
 
         # 判断遍历哪个环境
-        for index, item in enumerate(access_list):
+        for index, item in enumerate(get_access_list()):
             if item["env"] == env:
                 # 将字符串转换为 datetime 对象,需要设置下时区偏移（480min=8h）
                 Sdate_time_obj = datetime.strptime(start_time, '%Y-%m-%d %H:%M:%S').replace(tzinfo=pytz.FixedOffset(480))
@@ -904,7 +901,7 @@ class AWSecs():
     """
     def ecs_info(env):
         # 判断环境
-        for index, item in enumerate(access_list):
+        for index, item in enumerate(get_access_list()):
             if item["env"] == env: 
                 result = ecsCollect(region=item["region"],access_key=item["access_key"],secret_key=item["secret_key"])
                 return result
@@ -912,7 +909,7 @@ class AWSecs():
 
     def describetaskdefine(env, taskarn):
         # 判断环境
-        for index, item in enumerate(access_list):
+        for index, item in enumerate(get_access_list()):
             if item["env"] == env: 
                 ec = ECS.proc(region=item["region"],access_key=item["access_key"],secret_key=item["secret_key"])
                 result = ec.describe_taskdefine(taskarn)
@@ -924,7 +921,7 @@ class AWSecs():
         """
         result = {}
         # 判断遍历哪个环境
-        for index, item in enumerate(access_list):
+        for index, item in enumerate(get_access_list()):
             if item["env"] == env:
                 ecs_client = ECS.proc(region=item["region"],access_key=item["access_key"],secret_key=item["secret_key"])
                 ecs_client.exec_for_cluster_service_custom(get_target_group, result)
@@ -955,7 +952,7 @@ class AWSRoute53():
         links = []  # 返回给前端link数据
 
         # 判断遍历哪个环境
-        for index, item in enumerate(access_list):
+        for index, item in enumerate(get_access_list()):
             if item["env"] == env:
                 elbv2_client = elbv2.proc(region=item["region"], access_key=item["access_key"], secret_key=item["secret_key"])
                 # 获取负载均衡器Arn
@@ -1079,7 +1076,7 @@ class AWSAthena():
             获取所有可用的 AWS 环境列表
         """
         result = []
-        for index, item in enumerate(access_list):
+        for index, item in enumerate(get_access_list()):
             env_info = {
                 "id": item["env"],
                 "name": item["env"],
@@ -1096,7 +1093,7 @@ class AWSAthena():
             获取指定环境下的所有 Athena 数据库
         """
         result = []
-        for index, item in enumerate(access_list):
+        for index, item in enumerate(get_access_list()):
             if item["env"] == env:
                 athena_client = boto3.client(
                     'athena',
@@ -1130,7 +1127,7 @@ class AWSAthena():
             获取指定数据库下的所有数据表
         """
         result = []
-        for index, item in enumerate(access_list):
+        for index, item in enumerate(get_access_list()):
             if item["env"] == env:
                 athena_client = boto3.client(
                     'athena',
@@ -1173,7 +1170,7 @@ class AWSAthena():
             "execution_time": 0
         }
         
-        for index, item in enumerate(access_list):
+        for index, item in enumerate(get_access_list()):
             if item["env"] == env:
                 athena_client = boto3.client(
                     'athena',
@@ -1257,7 +1254,7 @@ class AWSAthena():
             获取查询状态
         """
         result = {}
-        for index, item in enumerate(access_list):
+        for index, item in enumerate(get_access_list()):
             if item["env"] == env:
                 athena_client = boto3.client(
                     'athena',

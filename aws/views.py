@@ -7,10 +7,9 @@ from django.contrib.auth import authenticate, login
 from django.contrib.auth.decorators import login_required
 
 from utils import iam
-from .models import AWSUser, AWSCloudWatch, AWSecs, AWSRoute53, AWSAthena, AWSEnvironment, AWSEnvironmentService
+from .models import AWSUser, AWSCloudWatch, AWSecs, AWSRoute53, AWSAthena, AWSEnvironment, AWSEnvironmentService, get_access_list
 from settings import emailList
 
-access_list = AWSEnvironmentService.get_access_list()
 
 # 封装api接口
 def login_required_401(view_func):
@@ -143,7 +142,7 @@ def disable_console(request, id):
             return HttpResponse("None")
         else:
             # 根据环境寻找key，对对应环境的用户进行操作
-            for access in access_list:
+            for access in get_access_list():
                 if access['env'] == env:
                     # proc = iam.proc(access['region'], access['access_key'], access['secret_key'])
                     # proc.delete_login_profile(id)
@@ -165,7 +164,7 @@ def reset_password(request, id):
             return HttpResponse("None")
         else:
             # 根据环境寻找key，对对应环境的用户进行操作
-            for access in access_list:
+            for access in get_access_list():
                 if access['env'] == env:
                     # proc = iam.proc(access['region'], access['access_key'], access['secret_key'])
                     # proc.create_login_profile(id)
@@ -455,9 +454,6 @@ def create_environment(request):
             'description': description,
         })
         
-        global access_list
-        access_list = AWSEnvironmentService.get_access_list()
-        
         return JsonResponse({
             "status": "success",
             "data": environment.to_dict()
@@ -524,9 +520,6 @@ def update_environment(request, env_id):
         
         environment = AWSEnvironmentService.update_environment(environment, update_data)
         
-        global access_list
-        access_list = AWSEnvironmentService.get_access_list()
-        
         return JsonResponse({
             "status": "success",
             "data": environment.to_dict()
@@ -568,9 +561,6 @@ def delete_environment(request, env_id):
         
         AWSEnvironmentService.delete_environment(environment)
         
-        global access_list
-        access_list = AWSEnvironmentService.get_access_list()
-        
         return JsonResponse({
             "status": "success",
             "data": None
@@ -605,9 +595,6 @@ def set_default_environment(request, env_id):
             }, status=404)
         
         AWSEnvironmentService.set_default_environment(environment)
-        
-        global access_list
-        access_list = AWSEnvironmentService.get_access_list()
         
         return JsonResponse({
             "status": "success",
