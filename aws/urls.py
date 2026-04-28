@@ -40,4 +40,8 @@ urlpatterns = [
     path('athena/tables', views.get_athena_tables, name='athena_tables'),
     path('athena/query', views.execute_athena_query, name='athena_query'),
     path('athena/query_status', views.get_athena_query_status, name='athena_query_status'),
+    
+    path('environments', views.environments_list, name='environments_list'),
+    path('environments/<int:env_id>', views.environments_detail, name='environments_detail'),
+    path('environments/<int:env_id>/set-default', views.set_default_environment, name='set_default_environment'),
 ]

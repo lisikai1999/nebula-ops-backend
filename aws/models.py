@@ -1,4 +1,5 @@
-# from django.db import models
+from django.db import models
+from django.utils import timezone
 import pytz
 import time
 import json
@@ -8,9 +9,141 @@ from email.mime.text import MIMEText
 from datetime import datetime, timedelta
 
 from utils import iam, logs, cloudwatch, ecs as ECS, route53, elbv2
-from settings import emailList, access_list, adminEmail, adminPassword, ccEmail, rdsSizeList
+from settings import emailList, adminEmail, adminPassword, ccEmail, rdsSizeList
 
 
+class AWSEnvironment(models.Model):
+    id = models.AutoField(primary_key=True)
+    name = models.CharField(max_length=100, unique=True, verbose_name='环境名称')
+    access_key_id = models.CharField(max_length=200, verbose_name='Access Key ID')
+    secret_access_key = models.CharField(max_length=200, verbose_name='Secret Access Key')
+    region = models.CharField(max_length=50, verbose_name='区域')
+    is_default = models.BooleanField(default=False, verbose_name='是否默认环境')
+    description = models.TextField(blank=True, default='', verbose_name='描述')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
+
+    class Meta:
+        db_table = 'aws_environments'
+        ordering = ['-created_at']
+        verbose_name = 'AWS环境凭证'
+        verbose_name_plural = 'AWS环境凭证'
+
+    def __str__(self):
+        return self.name
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'access_key_id': self.access_key_id,
+            'region': self.region,
+            'is_default': self.is_default,
+            'description': self.description,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+    def get_credentials(self):
+        return {
+            'env': self.name,
+            'region': self.region,
+            'access_key': self.access_key_id,
+            'secret_key': self.secret_access_key,
+            'login_url': '',
+        }
+
+
+class AWSEnvironmentService:
+    @staticmethod
+    def get_all_environments():
+        return list(AWSEnvironment.objects.all())
+
+    @staticmethod
+    def get_environment_by_id(env_id):
+        try:
+            return AWSEnvironment.objects.get(id=env_id)
+        except AWSEnvironment.DoesNotExist:
+            return None
+
+    @staticmethod
+    def get_default_environment():
+        try:
+            return AWSEnvironment.objects.get(is_default=True)
+        except AWSEnvironment.DoesNotExist:
+            return AWSEnvironment.objects.first()
+
+    @staticmethod
+    def get_access_list():
+        try:
+            environments = AWSEnvironment.objects.all()
+            if not environments:
+                from settings import access_list
+                return access_list
+            return [env.get_credentials() for env in environments]
+        except Exception:
+            from settings import access_list
+            return access_list
+
+    @staticmethod
+    def create_environment(data):
+        is_default = data.get('is_default', False)
+        
+        if is_default:
+            AWSEnvironment.objects.filter(is_default=True).update(is_default=False)
+        
+        environment = AWSEnvironment(
+            name=data['name'],
+            access_key_id=data['access_key_id'],
+            secret_access_key=data['secret_access_key'],
+            region=data['region'],
+            is_default=is_default,
+            description=data.get('description', ''),
+        )
+        environment.save()
+        return environment
+
+    @staticmethod
+    def update_environment(environment, data):
+        is_default = data.get('is_default', False)
+        
+        if is_default and not environment.is_default:
+            AWSEnvironment.objects.filter(is_default=True).update(is_default=False)
+        
+        if 'name' in data:
+            environment.name = data['name']
+        if 'access_key_id' in data:
+            environment.access_key_id = data['access_key_id']
+        if 'secret_access_key' in data and data['secret_access_key']:
+            environment.secret_access_key = data['secret_access_key']
+        if 'region' in data:
+            environment.region = data['region']
+        if 'is_default' in data:
+            environment.is_default = is_default
+        if 'description' in data:
+            environment.description = data['description']
+        
+        environment.save()
+        return environment
+
+    @staticmethod
+    def delete_environment(environment):
+        environment.delete()
+
+    @staticmethod
+    def set_default_environment(environment):
+        AWSEnvironment.objects.filter(is_default=True).update(is_default=False)
+        environment.is_default = True
+        environment.save()
+        return environment
+
+
+def get_access_list():
+    try:
+        return AWSEnvironmentService.get_access_list()
+    except Exception:
+        from settings import access_list as fallback_access_list
+        return fallback_access_list
 
 
 # 错误信息
@@ -583,7 +716,7 @@ def search_all_log_group(env):
     """
     result = []
     # 判断遍历哪个环境
-    for index, item in enumerate(access_list):
+    for index, item in enumerate(get_access_list()):
         if item["env"] == env:
             logs_client = logs.proc(region=item["region"],access_key=item["access_key"],secret_key=item["secret_key"])
             result = logs_client.get_cloudwatch_log_group_name()
@@ -596,7 +729,7 @@ def get_metric_data_IncomingBytes(days, PeriodDay):
         PeriodDay: 指标聚合天数
     """
     result = []
-    for index, item in enumerate(access_list):
+    for index, item in enumerate(get_access_list()):
         # 获取IncomingBytes指标数据
         now = datetime.now()
 
@@ -638,7 +771,7 @@ def list_zone_id(env):
     """
     result = []
     # 判断遍历哪个环境
-    for index, item in enumerate(access_list):
+    for index, item in enumerate(get_access_list()):
         if item["env"] == env:
             logs_client = route53.proc(region=item["region"],access_key=item["access_key"],secret_key=item["secret_key"])
             response = logs_client.list_hosted_zones()
@@ -656,7 +789,7 @@ def get_record(env, ZoneId):
         搜索某个环境zone的域名路径
     """
     # 判断遍历哪个环境
-    for index, item in enumerate(access_list):
+    for index, item in enumerate(get_access_list()):
         if item["env"] == env:
             logs_client = route53.proc(region=item["region"],access_key=item["access_key"],secret_key=item["secret_key"])
             response = logs_client.get_all_A_resource_record(ZoneId)
@@ -688,8 +821,8 @@ class AWSUser():
             获取用户信息
         """
         result = []
-        for access in access_list:
-            if access['env'] == 'china dev-staging' or access['env'] == 'china prod':
+        for access in get_access_list():
+            if access['env'] == 'china-dev' or access['env'] == 'china-prod':
                 p = iam.proc(access['region'], access['access_key'], access['secret_key'])
                 result += userNoLogin(p, access['login_url'], access['env'], 42)
 
@@ -723,7 +856,7 @@ class AWSCloudWatch():
         line = 2000000     # 文件最大行数
 
         # 判断遍历哪个环境
-        for index, item in enumerate(access_list):
+        for index, item in enumerate(get_access_list()):
             if item["env"] == env:
                 # 将字符串转换为 datetime 对象,需要设置下时区偏移（480min=8h）
                 Sdate_time_obj = datetime.strptime(start_time, '%Y-%m-%d %H:%M:%S').replace(tzinfo=pytz.FixedOffset(480))
@@ -768,7 +901,7 @@ class AWSecs():
     """
     def ecs_info(env):
         # 判断环境
-        for index, item in enumerate(access_list):
+        for index, item in enumerate(get_access_list()):
             if item["env"] == env: 
                 result = ecsCollect(region=item["region"],access_key=item["access_key"],secret_key=item["secret_key"])
                 return result
@@ -776,7 +909,7 @@ class AWSecs():
 
     def describetaskdefine(env, taskarn):
         # 判断环境
-        for index, item in enumerate(access_list):
+        for index, item in enumerate(get_access_list()):
             if item["env"] == env: 
                 ec = ECS.proc(region=item["region"],access_key=item["access_key"],secret_key=item["secret_key"])
                 result = ec.describe_taskdefine(taskarn)
@@ -788,7 +921,7 @@ class AWSecs():
         """
         result = {}
         # 判断遍历哪个环境
-        for index, item in enumerate(access_list):
+        for index, item in enumerate(get_access_list()):
             if item["env"] == env:
                 ecs_client = ECS.proc(region=item["region"],access_key=item["access_key"],secret_key=item["secret_key"])
                 ecs_client.exec_for_cluster_service_custom(get_target_group, result)
@@ -819,7 +952,7 @@ class AWSRoute53():
         links = []  # 返回给前端link数据
 
         # 判断遍历哪个环境
-        for index, item in enumerate(access_list):
+        for index, item in enumerate(get_access_list()):
             if item["env"] == env:
                 elbv2_client = elbv2.proc(region=item["region"], access_key=item["access_key"], secret_key=item["secret_key"])
                 # 获取负载均衡器Arn
@@ -943,7 +1076,7 @@ class AWSAthena():
             获取所有可用的 AWS 环境列表
         """
         result = []
-        for index, item in enumerate(access_list):
+        for index, item in enumerate(get_access_list()):
             env_info = {
                 "id": item["env"],
                 "name": item["env"],
@@ -960,7 +1093,7 @@ class AWSAthena():
             获取指定环境下的所有 Athena 数据库
         """
         result = []
-        for index, item in enumerate(access_list):
+        for index, item in enumerate(get_access_list()):
             if item["env"] == env:
                 athena_client = boto3.client(
                     'athena',
@@ -994,7 +1127,7 @@ class AWSAthena():
             获取指定数据库下的所有数据表
         """
         result = []
-        for index, item in enumerate(access_list):
+        for index, item in enumerate(get_access_list()):
             if item["env"] == env:
                 athena_client = boto3.client(
                     'athena',
@@ -1037,7 +1170,7 @@ class AWSAthena():
             "execution_time": 0
         }
         
-        for index, item in enumerate(access_list):
+        for index, item in enumerate(get_access_list()):
             if item["env"] == env:
                 athena_client = boto3.client(
                     'athena',
@@ -1121,7 +1254,7 @@ class AWSAthena():
             获取查询状态
         """
         result = {}
-        for index, item in enumerate(access_list):
+        for index, item in enumerate(get_access_list()):
             if item["env"] == env:
                 athena_client = boto3.client(
                     'athena',
