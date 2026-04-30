@@ -11,9 +11,96 @@ https://docs.djangoproject.com/en/4.0/ref/settings/
 """
 
 import os
+import logging
 from pathlib import Path
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# 日志目录配置
+LOGS_DIR = BASE_DIR / 'logs'
+LOGS_DIR.mkdir(exist_ok=True)
+
+# 日志配置
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '[%(asctime)s] [%(levelname)s] [%(name)s:%(lineno)d] [%(process)d:%(thread)d] - %(message)s',
+            'datefmt': '%Y-%m-%d %H:%M:%S'
+        },
+        'simple': {
+            'format': '[%(asctime)s] [%(levelname)s] - %(message)s',
+            'datefmt': '%Y-%m-%d %H:%M:%S'
+        },
+        'async_task': {
+            'format': '[%(asctime)s] [%(levelname)s] [%(name)s] [incident_id:%(incident_id)s] - %(message)s',
+            'datefmt': '%Y-%m-%d %H:%M:%S'
+        },
+    },
+    'filters': {
+        'require_debug_true': {
+            '()': 'django.utils.log.RequireDebugTrue',
+        },
+    },
+    'handlers': {
+        'console': {
+            'level': 'DEBUG',
+            'filters': ['require_debug_true'],
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose'
+        },
+        'file': {
+            'level': 'INFO',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': str(LOGS_DIR / 'app.log'),
+            'maxBytes': 1024 * 1024 * 50,  # 50MB
+            'backupCount': 10,
+            'formatter': 'verbose',
+            'encoding': 'utf-8'
+        },
+        'devops_incident_file': {
+            'level': 'DEBUG',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': str(LOGS_DIR / 'devops_incident.log'),
+            'maxBytes': 1024 * 1024 * 50,  # 50MB
+            'backupCount': 10,
+            'formatter': 'verbose',
+            'encoding': 'utf-8'
+        },
+        'error_file': {
+            'level': 'ERROR',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': str(LOGS_DIR / 'error.log'),
+            'maxBytes': 1024 * 1024 * 50,  # 50MB
+            'backupCount': 10,
+            'formatter': 'verbose',
+            'encoding': 'utf-8'
+        },
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console', 'file', 'error_file'],
+            'level': 'INFO',
+            'propagate': True,
+        },
+        'django.request': {
+            'handlers': ['file', 'error_file'],
+            'level': 'ERROR',
+            'propagate': False,
+        },
+        'aws': {
+            'handlers': ['console', 'file', 'devops_incident_file', 'error_file'],
+            'level': 'DEBUG',
+            'propagate': True,
+        },
+        'aws.devops': {
+            'handlers': ['console', 'devops_incident_file', 'error_file'],
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+    },
+}
 
 
 # Quick-start development settings - unsuitable for production
@@ -34,9 +121,9 @@ CORS_ORIGIN_WHITELIST = [
     "http://127.0.0.1:5173",
     "http://192.168.200.97:5000",
     "http://10.8.39.131:5000",
-    "http://10.12.18.184:5000"
-    "http://10.8.51.123"
-    
+    "http://10.12.18.184:5000",
+    "http://10.8.51.123",
+    "http://192.168.220.129:5000",
 ]
 
 CSRF_TRUSTED_ORIGINS = [
@@ -45,7 +132,8 @@ CSRF_TRUSTED_ORIGINS = [
     "http://192.168.200.97:5000",
     "http://10.8.39.131:5000",
     "http://10.12.18.184:5000",
-    "http://10.8.51.123"
+    "http://10.8.51.123",
+    "http://192.168.220.129:5000"
 ]
 
 # 确保会话 Cookie 可跨域传递
@@ -62,6 +150,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'workflow',
+    'aws',
 ]
 
 MIDDLEWARE = [
