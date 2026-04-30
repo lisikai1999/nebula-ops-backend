@@ -7,8 +7,13 @@ from django.contrib.auth import authenticate, login
 from django.contrib.auth.decorators import login_required
 
 from utils import iam
-from .models import AWSUser, AWSCloudWatch, AWSecs, AWSRoute53, AWSAthena
-from settings import emailList, access_list
+from .models import (
+    AWSUser, AWSCloudWatch, AWSecs, AWSRoute53, AWSAthena, 
+    AWSEnvironment, AWSEnvironmentService, get_access_list,
+    DevOpsIncident, DevOpsIncidentService, DevOpsDiagnosisService
+)
+from settings import emailList
+
 
 # 封装api接口
 def login_required_401(view_func):
@@ -141,7 +146,7 @@ def disable_console(request, id):
             return HttpResponse("None")
         else:
             # 根据环境寻找key，对对应环境的用户进行操作
-            for access in access_list:
+            for access in get_access_list():
                 if access['env'] == env:
                     # proc = iam.proc(access['region'], access['access_key'], access['secret_key'])
                     # proc.delete_login_profile(id)
@@ -163,7 +168,7 @@ def reset_password(request, id):
             return HttpResponse("None")
         else:
             # 根据环境寻找key，对对应环境的用户进行操作
-            for access in access_list:
+            for access in get_access_list():
                 if access['env'] == env:
                     # proc = iam.proc(access['region'], access['access_key'], access['secret_key'])
                     # proc.create_login_profile(id)
@@ -350,5 +355,534 @@ def get_athena_query_status(request):
         return JsonResponse({
             "status": "error",
             "message": "获取查询状态失败",
+            "detail": str(e)
+        }, status=500)
+
+
+@login_required_401
+def get_environments(request):
+    """
+        获取所有 AWS 环境列表
+    """
+    try:
+        environments = AWSEnvironmentService.get_all_environments()
+        data = [env.to_dict() for env in environments]
+        return JsonResponse({
+            "status": "success",
+            "data": data
+        })
+    except Exception as e:
+        return JsonResponse({
+            "status": "error",
+            "message": "获取环境列表失败",
+            "detail": str(e)
+        }, status=500)
+
+
+@login_required_401
+def environments_list(request):
+    """
+        处理 GET (获取列表) 和 POST (创建) 请求
+    """
+    if request.method == 'GET':
+        return get_environments(request)
+    elif request.method == 'POST':
+        return create_environment(request)
+    else:
+        return JsonResponse({
+            "status": "error",
+            "message": "方法不允许",
+            "detail": "只支持 GET 和 POST 请求"
+        }, status=405)
+
+
+@login_required_401
+def environments_detail(request, env_id):
+    """
+        处理 PUT (更新) 和 DELETE (删除) 请求
+    """
+    if request.method == 'PUT':
+        return update_environment(request, env_id)
+    elif request.method == 'DELETE':
+        return delete_environment(request, env_id)
+    else:
+        return JsonResponse({
+            "status": "error",
+            "message": "方法不允许",
+            "detail": "只支持 PUT 和 DELETE 请求"
+        }, status=405)
+
+
+@login_required_401
+def create_environment(request):
+    """
+        创建新的 AWS 环境
+    """
+    if request.method != 'POST':
+        return JsonResponse({
+            "status": "error",
+            "message": "方法不允许",
+            "detail": "只支持 POST 请求"
+        }, status=405)
+    
+    try:
+        body = json.loads(request.body)
+        
+        name = body.get('name', '').strip()
+        access_key_id = body.get('access_key_id', '').strip()
+        secret_access_key = body.get('secret_access_key', '').strip()
+        region = body.get('region', '').strip()
+        is_default = body.get('is_default', False)
+        description = body.get('description', '').strip()
+        
+        if not name or not access_key_id or not secret_access_key or not region:
+            return JsonResponse({
+                "status": "error",
+                "message": "参数缺失",
+                "detail": "name, access_key_id, secret_access_key, region 是必需的"
+            }, status=400)
+        
+        if AWSEnvironment.objects.filter(name=name).exists():
+            return JsonResponse({
+                "status": "error",
+                "message": "环境名称已存在",
+                "detail": f"环境名称 '{name}' 已存在，请使用其他名称"
+            }, status=400)
+        
+        environment = AWSEnvironmentService.create_environment({
+            'name': name,
+            'access_key_id': access_key_id,
+            'secret_access_key': secret_access_key,
+            'region': region,
+            'is_default': is_default,
+            'description': description,
+        })
+        
+        return JsonResponse({
+            "status": "success",
+            "data": environment.to_dict()
+        })
+    except json.JSONDecodeError:
+        return JsonResponse({
+            "status": "error",
+            "message": "请求体格式错误",
+            "detail": "请提供有效的 JSON 格式"
+        }, status=400)
+    except Exception as e:
+        return JsonResponse({
+            "status": "error",
+            "message": "创建环境失败",
+            "detail": str(e)
+        }, status=500)
+
+
+@login_required_401
+def update_environment(request, env_id):
+    """
+        更新 AWS 环境
+    """
+    if request.method != 'PUT':
+        return JsonResponse({
+            "status": "error",
+            "message": "方法不允许",
+            "detail": "只支持 PUT 请求"
+        }, status=405)
+    
+    try:
+        environment = AWSEnvironmentService.get_environment_by_id(env_id)
+        if not environment:
+            return JsonResponse({
+                "status": "error",
+                "message": "环境不存在",
+                "detail": f"ID 为 {env_id} 的环境不存在"
+            }, status=404)
+        
+        body = json.loads(request.body)
+        
+        name = body.get('name', '').strip()
+        if name and name != environment.name:
+            if AWSEnvironment.objects.filter(name=name).exclude(id=env_id).exists():
+                return JsonResponse({
+                    "status": "error",
+                    "message": "环境名称已存在",
+                    "detail": f"环境名称 '{name}' 已存在，请使用其他名称"
+                }, status=400)
+        
+        update_data = {}
+        if name:
+            update_data['name'] = name
+        if 'access_key_id' in body and body['access_key_id']:
+            update_data['access_key_id'] = body['access_key_id'].strip()
+        if 'secret_access_key' in body:
+            update_data['secret_access_key'] = body['secret_access_key'].strip()
+        if 'region' in body and body['region']:
+            update_data['region'] = body['region'].strip()
+        if 'is_default' in body:
+            update_data['is_default'] = body['is_default']
+        if 'description' in body:
+            update_data['description'] = body['description'].strip()
+        
+        environment = AWSEnvironmentService.update_environment(environment, update_data)
+        
+        return JsonResponse({
+            "status": "success",
+            "data": environment.to_dict()
+        })
+    except json.JSONDecodeError:
+        return JsonResponse({
+            "status": "error",
+            "message": "请求体格式错误",
+            "detail": "请提供有效的 JSON 格式"
+        }, status=400)
+    except Exception as e:
+        return JsonResponse({
+            "status": "error",
+            "message": "更新环境失败",
+            "detail": str(e)
+        }, status=500)
+
+
+@login_required_401
+def delete_environment(request, env_id):
+    """
+        删除 AWS 环境
+    """
+    if request.method != 'DELETE':
+        return JsonResponse({
+            "status": "error",
+            "message": "方法不允许",
+            "detail": "只支持 DELETE 请求"
+        }, status=405)
+    
+    try:
+        environment = AWSEnvironmentService.get_environment_by_id(env_id)
+        if not environment:
+            return JsonResponse({
+                "status": "error",
+                "message": "环境不存在",
+                "detail": f"ID 为 {env_id} 的环境不存在"
+            }, status=404)
+        
+        AWSEnvironmentService.delete_environment(environment)
+        
+        return JsonResponse({
+            "status": "success",
+            "data": None
+        })
+    except Exception as e:
+        return JsonResponse({
+            "status": "error",
+            "message": "删除环境失败",
+            "detail": str(e)
+        }, status=500)
+
+
+@login_required_401
+def set_default_environment(request, env_id):
+    """
+        设置默认环境
+    """
+    if request.method != 'POST':
+        return JsonResponse({
+            "status": "error",
+            "message": "方法不允许",
+            "detail": "只支持 POST 请求"
+        }, status=405)
+    
+    try:
+        environment = AWSEnvironmentService.get_environment_by_id(env_id)
+        if not environment:
+            return JsonResponse({
+                "status": "error",
+                "message": "环境不存在",
+                "detail": f"ID 为 {env_id} 的环境不存在"
+            }, status=404)
+        
+        AWSEnvironmentService.set_default_environment(environment)
+        
+        return JsonResponse({
+            "status": "success",
+            "data": environment.to_dict()
+        })
+    except Exception as e:
+        return JsonResponse({
+            "status": "error",
+            "message": "设置默认环境失败",
+            "detail": str(e)
+        }, status=500)
+
+
+@login_required_401
+def devops_incident_list(request):
+    """
+        DevOps 事件调查列表接口
+        GET /api/aws/devops-incident - 获取事件调查列表
+        POST /api/aws/devops-incident - 创建新的事件调查
+    """
+    if request.method == 'GET':
+        try:
+            status = request.GET.get('status', None)
+            severity = request.GET.get('severity', None)
+            environment_id = request.GET.get('environment_id', None)
+            keyword = request.GET.get('keyword', None)
+            page = int(request.GET.get('page', 1))
+            page_size = int(request.GET.get('page_size', 10))
+            
+            filters = {}
+            if status:
+                filters['status'] = status
+            if severity:
+                filters['severity'] = severity
+            if environment_id:
+                filters['environment_id'] = environment_id
+            if keyword:
+                filters['keyword'] = keyword
+            
+            result = DevOpsIncidentService.get_user_incidents(
+                user=None,
+                filters=filters,
+                page=page,
+                page_size=page_size
+            )
+            
+            return JsonResponse({
+                "status": "success",
+                "data": result['incidents'],
+                "total": result['total'],
+                "page": result['page'],
+                "page_size": result['page_size']
+            })
+        except Exception as e:
+            return JsonResponse({
+                "status": "error",
+                "message": "获取事件调查列表失败",
+                "detail": str(e)
+            }, status=500)
+    
+    elif request.method == 'POST':
+        try:
+            body = json.loads(request.body)
+            
+            title = body.get('title', '').strip()
+            severity = body.get('severity', 'high')
+            environment_id = body.get('environment_id')
+            environment_name = body.get('environment_name', '')
+            background = body.get('background', '').strip()
+            description = body.get('description', '').strip()
+            
+            if not title:
+                return JsonResponse({
+                    "status": "error",
+                    "message": "参数缺失",
+                    "detail": "title 参数是必需的"
+                }, status=400)
+            
+            if not background or len(background) < 10:
+                return JsonResponse({
+                    "status": "error",
+                    "message": "参数缺失",
+                    "detail": "background 参数至少需要 10 个字符"
+                }, status=400)
+            
+            if not description or len(description) < 10:
+                return JsonResponse({
+                    "status": "error",
+                    "message": "参数缺失",
+                    "detail": "description 参数至少需要 10 个字符"
+                }, status=400)
+            
+            incident = DevOpsIncidentService.create_incident(
+                user=request.user,
+                data={
+                    'title': title,
+                    'severity': severity,
+                    'environment_id': environment_id,
+                    'environment_name': environment_name,
+                    'background': background,
+                    'description': description
+                }
+            )
+            
+            DevOpsDiagnosisService.start_async_diagnosis(
+                incident_id=incident.id,
+                environment_id=environment_id
+            )
+            
+            return JsonResponse({
+                "status": "success",
+                "data": incident.to_dict()
+            })
+        except json.JSONDecodeError:
+            return JsonResponse({
+                "status": "error",
+                "message": "请求体格式错误",
+                "detail": "请提供有效的 JSON 格式"
+            }, status=400)
+        except Exception as e:
+            return JsonResponse({
+                "status": "error",
+                "message": "创建事件调查失败",
+                "detail": str(e)
+            }, status=500)
+    
+    else:
+        return JsonResponse({
+            "status": "error",
+            "message": "方法不允许",
+            "detail": "只支持 GET 和 POST 请求"
+        }, status=405)
+
+
+@login_required_401
+def devops_incident_detail(request, incident_id):
+    """
+        DevOps 事件调查详情接口
+        GET /api/aws/devops-incident/{id} - 获取事件调查详情
+    """
+    if request.method != 'GET':
+        return JsonResponse({
+            "status": "error",
+            "message": "方法不允许",
+            "detail": "只支持 GET 请求"
+        }, status=405)
+    
+    try:
+        incident = DevOpsIncidentService.get_incident_by_id(incident_id, user=None)
+        
+        if not incident:
+            return JsonResponse({
+                "status": "error",
+                "message": "事件调查不存在",
+                "detail": f"ID 为 {incident_id} 的事件调查不存在"
+            }, status=404)
+        
+        return JsonResponse({
+            "status": "success",
+            "data": incident.to_dict()
+        })
+    except Exception as e:
+        return JsonResponse({
+            "status": "error",
+            "message": "获取事件调查详情失败",
+            "detail": str(e)
+        }, status=500)
+
+
+@login_required_401
+def devops_incident_cancel(request, incident_id):
+    """
+        取消事件调查
+        POST /api/aws/devops-incident/{id}/cancel
+    """
+    if request.method != 'POST':
+        return JsonResponse({
+            "status": "error",
+            "message": "方法不允许",
+            "detail": "只支持 POST 请求"
+        }, status=405)
+    
+    try:
+        incident = DevOpsIncidentService.get_incident_by_id(incident_id, user=None)
+        
+        if not incident:
+            return JsonResponse({
+                "status": "error",
+                "message": "事件调查不存在",
+                "detail": f"ID 为 {incident_id} 的事件调查不存在"
+            }, status=404)
+        
+        success = DevOpsIncidentService.cancel_incident(incident)
+        
+        if not success:
+            return JsonResponse({
+                "status": "error",
+                "message": "无法取消",
+                "detail": "当前状态的事件调查无法取消"
+            }, status=400)
+        
+        return JsonResponse({
+            "status": "success",
+            "data": incident.to_dict()
+        })
+    except Exception as e:
+        return JsonResponse({
+            "status": "error",
+            "message": "取消事件调查失败",
+            "detail": str(e)
+        }, status=500)
+
+
+@login_required_401
+def devops_incident_export(request, incident_id):
+    """
+        导出事件调查报告
+        GET /api/aws/devops-incident/{id}/export
+    """
+    if request.method != 'GET':
+        return JsonResponse({
+            "status": "error",
+            "message": "方法不允许",
+            "detail": "只支持 GET 请求"
+        }, status=405)
+    
+    try:
+        incident = DevOpsIncidentService.get_incident_by_id(incident_id, user=None)
+        
+        if not incident:
+            return JsonResponse({
+                "status": "error",
+                "message": "事件调查不存在",
+                "detail": f"ID 为 {incident_id} 的事件调查不存在"
+            }, status=404)
+        
+        from datetime import datetime
+        from io import BytesIO
+        
+        report_content = f"""DevOps 事件调查报告
+======================
+
+事件ID: {incident.incident_id}
+标题: {incident.title}
+状态: {incident.status}
+严重程度: {incident.severity}
+环境: {incident.environment_name or '-'}
+
+事件背景:
+{incident.background}
+
+事件说明:
+{incident.description}
+
+调查进度:
+当前步骤: {incident.progress.get('currentStep', 0)}
+进度: {incident.progress.get('percentage', 0)}%
+
+根因分析:
+{incident.root_cause.get('mainCause', '待分析')}
+{incident.root_cause.get('description', '')}
+
+修复建议:
+立即执行:
+{chr(10).join([f"- {s.get('title', '')}" for s in incident.fix_suggestions.get('immediate', [])])}
+
+长期优化:
+{chr(10).join([f"- {s.get('title', '')}" for s in incident.fix_suggestions.get('longterm', [])])}
+
+生成时间: {datetime.now().isoformat()}
+"""
+        
+        buffer = BytesIO()
+        buffer.write(report_content.encode('utf-8'))
+        buffer.seek(0)
+        
+        response = HttpResponse(buffer.getvalue(), content_type='text/plain; charset=utf-8')
+        response['Content-Disposition'] = f'attachment; filename=incident_{incident_id}_{datetime.now().strftime("%Y%m%d")}.txt'
+        response["Access-Control-Expose-Headers"] = "Content-Disposition"
+        
+        return response
+    except Exception as e:
+        return JsonResponse({
+            "status": "error",
+            "message": "导出事件调查报告失败",
             "detail": str(e)
         }, status=500)

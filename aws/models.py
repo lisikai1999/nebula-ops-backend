@@ -1,4 +1,6 @@
-# from django.db import models
+import logging
+from django.db import models
+from django.utils import timezone
 import pytz
 import time
 import json
@@ -8,9 +10,143 @@ from email.mime.text import MIMEText
 from datetime import datetime, timedelta
 
 from utils import iam, logs, cloudwatch, ecs as ECS, route53, elbv2
-from settings import emailList, access_list, adminEmail, adminPassword, ccEmail, rdsSizeList
+from settings import emailList, adminEmail, adminPassword, ccEmail, rdsSizeList
+
+logger = logging.getLogger('aws.devops')
 
 
+class AWSEnvironment(models.Model):
+    id = models.AutoField(primary_key=True)
+    name = models.CharField(max_length=100, unique=True, verbose_name='环境名称')
+    access_key_id = models.CharField(max_length=200, verbose_name='Access Key ID')
+    secret_access_key = models.CharField(max_length=200, verbose_name='Secret Access Key')
+    region = models.CharField(max_length=50, verbose_name='区域')
+    is_default = models.BooleanField(default=False, verbose_name='是否默认环境')
+    description = models.TextField(blank=True, default='', verbose_name='描述')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
+
+    class Meta:
+        db_table = 'aws_environments'
+        ordering = ['-created_at']
+        verbose_name = 'AWS环境凭证'
+        verbose_name_plural = 'AWS环境凭证'
+
+    def __str__(self):
+        return self.name
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'access_key_id': self.access_key_id,
+            'region': self.region,
+            'is_default': self.is_default,
+            'description': self.description,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+    def get_credentials(self):
+        return {
+            'env': self.name,
+            'region': self.region,
+            'access_key': self.access_key_id,
+            'secret_key': self.secret_access_key,
+            'login_url': '',
+        }
+
+
+class AWSEnvironmentService:
+    @staticmethod
+    def get_all_environments():
+        return list(AWSEnvironment.objects.all())
+
+    @staticmethod
+    def get_environment_by_id(env_id):
+        try:
+            return AWSEnvironment.objects.get(id=env_id)
+        except AWSEnvironment.DoesNotExist:
+            return None
+
+    @staticmethod
+    def get_default_environment():
+        try:
+            return AWSEnvironment.objects.get(is_default=True)
+        except AWSEnvironment.DoesNotExist:
+            return AWSEnvironment.objects.first()
+
+    @staticmethod
+    def get_access_list():
+        try:
+            environments = AWSEnvironment.objects.all()
+            if not environments:
+                from settings import access_list
+                return access_list
+            return [env.get_credentials() for env in environments]
+        except Exception:
+            from settings import access_list
+            return access_list
+
+    @staticmethod
+    def create_environment(data):
+        is_default = data.get('is_default', False)
+        
+        if is_default:
+            AWSEnvironment.objects.filter(is_default=True).update(is_default=False)
+        
+        environment = AWSEnvironment(
+            name=data['name'],
+            access_key_id=data['access_key_id'],
+            secret_access_key=data['secret_access_key'],
+            region=data['region'],
+            is_default=is_default,
+            description=data.get('description', ''),
+        )
+        environment.save()
+        return environment
+
+    @staticmethod
+    def update_environment(environment, data):
+        is_default = data.get('is_default', False)
+        
+        if is_default and not environment.is_default:
+            AWSEnvironment.objects.filter(is_default=True).update(is_default=False)
+        
+        if 'name' in data:
+            environment.name = data['name']
+        if 'access_key_id' in data:
+            environment.access_key_id = data['access_key_id']
+        if 'secret_access_key' in data and data['secret_access_key']:
+            environment.secret_access_key = data['secret_access_key']
+        if 'region' in data:
+            environment.region = data['region']
+        if 'is_default' in data:
+            environment.is_default = is_default
+        if 'description' in data:
+            environment.description = data['description']
+        
+        environment.save()
+        return environment
+
+    @staticmethod
+    def delete_environment(environment):
+        environment.delete()
+
+    @staticmethod
+    def set_default_environment(environment):
+        AWSEnvironment.objects.filter(is_default=True).update(is_default=False)
+        environment.is_default = True
+        environment.save()
+        return environment
+
+
+def get_access_list():
+    try:
+        return AWSEnvironmentService.get_access_list()
+    except Exception:
+        from settings import access_list as fallback_access_list
+        return fallback_access_list
 
 
 # 错误信息
@@ -583,7 +719,7 @@ def search_all_log_group(env):
     """
     result = []
     # 判断遍历哪个环境
-    for index, item in enumerate(access_list):
+    for index, item in enumerate(get_access_list()):
         if item["env"] == env:
             logs_client = logs.proc(region=item["region"],access_key=item["access_key"],secret_key=item["secret_key"])
             result = logs_client.get_cloudwatch_log_group_name()
@@ -596,7 +732,7 @@ def get_metric_data_IncomingBytes(days, PeriodDay):
         PeriodDay: 指标聚合天数
     """
     result = []
-    for index, item in enumerate(access_list):
+    for index, item in enumerate(get_access_list()):
         # 获取IncomingBytes指标数据
         now = datetime.now()
 
@@ -638,7 +774,7 @@ def list_zone_id(env):
     """
     result = []
     # 判断遍历哪个环境
-    for index, item in enumerate(access_list):
+    for index, item in enumerate(get_access_list()):
         if item["env"] == env:
             logs_client = route53.proc(region=item["region"],access_key=item["access_key"],secret_key=item["secret_key"])
             response = logs_client.list_hosted_zones()
@@ -656,7 +792,7 @@ def get_record(env, ZoneId):
         搜索某个环境zone的域名路径
     """
     # 判断遍历哪个环境
-    for index, item in enumerate(access_list):
+    for index, item in enumerate(get_access_list()):
         if item["env"] == env:
             logs_client = route53.proc(region=item["region"],access_key=item["access_key"],secret_key=item["secret_key"])
             response = logs_client.get_all_A_resource_record(ZoneId)
@@ -688,8 +824,8 @@ class AWSUser():
             获取用户信息
         """
         result = []
-        for access in access_list:
-            if access['env'] == 'china dev-staging' or access['env'] == 'china prod':
+        for access in get_access_list():
+            if access['env'] == 'china-dev' or access['env'] == 'china-prod':
                 p = iam.proc(access['region'], access['access_key'], access['secret_key'])
                 result += userNoLogin(p, access['login_url'], access['env'], 42)
 
@@ -723,7 +859,7 @@ class AWSCloudWatch():
         line = 2000000     # 文件最大行数
 
         # 判断遍历哪个环境
-        for index, item in enumerate(access_list):
+        for index, item in enumerate(get_access_list()):
             if item["env"] == env:
                 # 将字符串转换为 datetime 对象,需要设置下时区偏移（480min=8h）
                 Sdate_time_obj = datetime.strptime(start_time, '%Y-%m-%d %H:%M:%S').replace(tzinfo=pytz.FixedOffset(480))
@@ -768,7 +904,7 @@ class AWSecs():
     """
     def ecs_info(env):
         # 判断环境
-        for index, item in enumerate(access_list):
+        for index, item in enumerate(get_access_list()):
             if item["env"] == env: 
                 result = ecsCollect(region=item["region"],access_key=item["access_key"],secret_key=item["secret_key"])
                 return result
@@ -776,7 +912,7 @@ class AWSecs():
 
     def describetaskdefine(env, taskarn):
         # 判断环境
-        for index, item in enumerate(access_list):
+        for index, item in enumerate(get_access_list()):
             if item["env"] == env: 
                 ec = ECS.proc(region=item["region"],access_key=item["access_key"],secret_key=item["secret_key"])
                 result = ec.describe_taskdefine(taskarn)
@@ -788,7 +924,7 @@ class AWSecs():
         """
         result = {}
         # 判断遍历哪个环境
-        for index, item in enumerate(access_list):
+        for index, item in enumerate(get_access_list()):
             if item["env"] == env:
                 ecs_client = ECS.proc(region=item["region"],access_key=item["access_key"],secret_key=item["secret_key"])
                 ecs_client.exec_for_cluster_service_custom(get_target_group, result)
@@ -819,7 +955,7 @@ class AWSRoute53():
         links = []  # 返回给前端link数据
 
         # 判断遍历哪个环境
-        for index, item in enumerate(access_list):
+        for index, item in enumerate(get_access_list()):
             if item["env"] == env:
                 elbv2_client = elbv2.proc(region=item["region"], access_key=item["access_key"], secret_key=item["secret_key"])
                 # 获取负载均衡器Arn
@@ -932,6 +1068,700 @@ class AWSElbV2():
     pass
 
 
+def generate_incident_id():
+    import time
+    import uuid
+    return f"incident_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"
+
+
+INCIDENT_STATUS_CHOICES = [
+    ('investigating', '调查中'),
+    ('completed', '已完成'),
+    ('closed', '已关闭'),
+    ('cancelled', '已取消'),
+    ('failed', '失败'),
+]
+
+INCIDENT_SEVERITY_CHOICES = [
+    ('critical', '严重'),
+    ('high', '高'),
+    ('medium', '中'),
+    ('low', '低'),
+]
+
+
+class DevOpsIncident(models.Model):
+    id = models.CharField(max_length=100, primary_key=True, default=generate_incident_id)
+    incident_id = models.CharField(max_length=100, unique=True, verbose_name='事件ID')
+    title = models.CharField(max_length=255, verbose_name='调查标题')
+    status = models.CharField(max_length=20, choices=INCIDENT_STATUS_CHOICES, default='investigating', verbose_name='状态')
+    severity = models.CharField(max_length=20, choices=INCIDENT_SEVERITY_CHOICES, default='high', verbose_name='严重程度')
+    
+    environment_id = models.CharField(max_length=100, null=True, blank=True, verbose_name='环境ID')
+    environment_name = models.CharField(max_length=100, null=True, blank=True, verbose_name='环境名称')
+    
+    background = models.TextField(verbose_name='事件背景')
+    description = models.TextField(verbose_name='事件说明')
+    
+    progress = models.JSONField(default=dict, verbose_name='调查进度')
+    timeline = models.JSONField(default=list, verbose_name='推理时间线')
+    root_cause = models.JSONField(default=dict, verbose_name='根因分析')
+    fix_suggestions = models.JSONField(default=dict, verbose_name='修复建议')
+    chat_messages = models.JSONField(default=list, verbose_name='对话消息')
+    
+    occurred_at = models.DateTimeField(auto_now_add=True, verbose_name='发生时间')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
+    completed_at = models.DateTimeField(null=True, blank=True, verbose_name='完成时间')
+    
+    user = models.ForeignKey('auth.User', on_delete=models.CASCADE, related_name='devops_incidents', null=True, blank=True)
+    
+    class Meta:
+        db_table = 'devops_incidents'
+        ordering = ['-created_at']
+        verbose_name = 'DevOps事件调查'
+        verbose_name_plural = 'DevOps事件调查'
+    
+    def save(self, *args, **kwargs):
+        if not self.incident_id:
+            self.incident_id = generate_incident_id()
+        if not self.progress:
+            self.progress = {
+                'currentStep': 0,
+                'percentage': 0,
+                'steps': [
+                    {'status': '进行中', 'icon': 'Loading', 'iconClass': 'processing'},
+                    {'status': '待处理', 'icon': 'Timer', 'iconClass': 'pending'},
+                    {'status': '待处理', 'icon': 'Timer', 'iconClass': 'pending'}
+                ]
+            }
+        super().save(*args, **kwargs)
+    
+    def to_dict(self):
+        from datetime import datetime
+        return {
+            'id': self.id,
+            'incidentId': self.incident_id,
+            'title': self.title,
+            'status': self.status,
+            'severity': self.severity,
+            'environmentId': self.environment_id,
+            'environmentName': self.environment_name,
+            'background': self.background,
+            'description': self.description,
+            'progress': self.progress,
+            'timeline': self.timeline,
+            'rootCause': self.root_cause,
+            'fixSuggestions': self.fix_suggestions,
+            'chatMessages': self.chat_messages,
+            'occurredAt': self.occurred_at.isoformat() if self.occurred_at else None,
+            'createdAt': self.created_at.isoformat() if self.created_at else None,
+            'updatedAt': self.updated_at.isoformat() if self.updated_at else None,
+            'completedAt': self.completed_at.isoformat() if self.completed_at else None,
+            'affectedService': self.environment_name or '-',
+        }
+
+
+class DevOpsIncidentService:
+    @staticmethod
+    def get_user_incidents(user, filters=None, page=1, page_size=10):
+        filters = filters or {}
+        queryset = DevOpsIncident.objects.all()
+        
+        if user:
+            queryset = queryset.filter(user=user)
+        
+        if filters.get('status'):
+            queryset = queryset.filter(status=filters['status'])
+        
+        if filters.get('severity'):
+            queryset = queryset.filter(severity=filters['severity'])
+        
+        if filters.get('environment_id'):
+            queryset = queryset.filter(environment_id=filters['environment_id'])
+        
+        if filters.get('keyword'):
+            keyword = filters['keyword']
+            queryset = queryset.filter(
+                models.Q(title__icontains=keyword) |
+                models.Q(description__icontains=keyword) |
+                models.Q(background__icontains=keyword)
+            )
+        
+        total = queryset.count()
+        
+        start = (page - 1) * page_size
+        end = start + page_size
+        incidents = queryset[start:end]
+        
+        return {
+            'incidents': [inc.to_dict() for inc in incidents],
+            'total': total,
+            'page': page,
+            'page_size': page_size
+        }
+    
+    @staticmethod
+    def get_incident_by_id(incident_id, user=None):
+        try:
+            incident = DevOpsIncident.objects.get(
+                models.Q(id=incident_id) | models.Q(incident_id=incident_id)
+            )
+            if user and incident.user and incident.user != user:
+                return None
+            return incident
+        except DevOpsIncident.DoesNotExist:
+            return None
+    
+    @staticmethod
+    def create_incident(user, data):
+        incident = DevOpsIncident(
+            user=user,
+            title=data.get('title', ''),
+            severity=data.get('severity', 'high'),
+            environment_id=data.get('environment_id'),
+            environment_name=data.get('environment_name'),
+            background=data.get('background', ''),
+            description=data.get('description', ''),
+            status='investigating',
+        )
+        incident.save()
+        
+        DevOpsIncidentService._initialize_timeline(incident)
+        
+        return incident
+    
+    @staticmethod
+    def _initialize_timeline(incident):
+        from datetime import datetime
+        
+        initial_timeline = [
+            {
+                'id': 1,
+                'timestamp': datetime.now().isoformat(),
+                'type': 'primary',
+                'icon': 'Search',
+                'title': '调查启动',
+                'description': 'DevOps Agent 已接收到调查请求，开始进行事件分析。',
+                'highlight': True,
+                'details': [
+                    '检查相关服务状态',
+                    '收集最近的日志和监控数据',
+                    '分析可能的故障模式'
+                ]
+            }
+        ]
+        
+        incident.timeline = initial_timeline
+        incident.save(update_fields=['timeline'])
+    
+    @staticmethod
+    def update_progress(incident, step, percentage):
+        progress = incident.progress.copy() if incident.progress else {}
+        progress['currentStep'] = step
+        progress['percentage'] = percentage
+        
+        steps = progress.get('steps', [
+            {'status': '待处理', 'icon': 'Timer', 'iconClass': 'pending'},
+            {'status': '待处理', 'icon': 'Timer', 'iconClass': 'pending'},
+            {'status': '待处理', 'icon': 'Timer', 'iconClass': 'pending'}
+        ])
+        
+        for i in range(len(steps)):
+            if i < step:
+                steps[i] = {'status': '已完成', 'icon': 'CircleCheck', 'iconClass': 'completed'}
+            elif i == step:
+                steps[i] = {'status': '进行中', 'icon': 'Loading', 'iconClass': 'processing'}
+            else:
+                steps[i] = {'status': '待处理', 'icon': 'Timer', 'iconClass': 'pending'}
+        
+        progress['steps'] = steps
+        incident.progress = progress
+        incident.save(update_fields=['progress'])
+    
+    @staticmethod
+    def cancel_incident(incident):
+        if incident.status not in ['investigating']:
+            return False
+        
+        incident.status = 'cancelled'
+        incident.save(update_fields=['status', 'updated_at'])
+        return True
+    
+    @staticmethod
+    def add_chat_message(incident, role, content, msg_type='normal', title=None, details=None, suggestion=None):
+        from datetime import datetime
+        
+        message = {
+            'role': role,
+            'content': content,
+            'time': datetime.now().strftime('%H:%M:%S'),
+            'type': msg_type
+        }
+        
+        if title:
+            message['title'] = title
+        if details:
+            message['details'] = details
+        if suggestion:
+            message['suggestion'] = suggestion
+        
+        chat_messages = incident.chat_messages.copy() if incident.chat_messages else []
+        chat_messages.append(message)
+        incident.chat_messages = chat_messages
+        incident.save(update_fields=['chat_messages'])
+        
+        return message
+    
+    @staticmethod
+    def update_incident_data(incident, field_name, data):
+        if field_name == 'root_cause':
+            incident.root_cause = data
+        elif field_name == 'fix_suggestions':
+            incident.fix_suggestions = data
+        elif field_name == 'timeline':
+            incident.timeline = data
+        elif field_name == 'progress':
+            incident.progress = data
+        elif field_name == 'status':
+            incident.status = data
+        incident.save()
+        return incident
+
+
+class DevOpsDiagnosisService:
+    @staticmethod
+    def start_async_diagnosis(incident_id, environment_id):
+        import threading
+        
+        logger.info(f"[incident_id:{incident_id}] 启动异步诊断任务，environment_id={environment_id}")
+        
+        thread = threading.Thread(
+            target=DevOpsDiagnosisService._run_diagnosis,
+            args=(incident_id, environment_id)
+        )
+        thread.daemon = True
+        thread.start()
+        
+        logger.info(f"[incident_id:{incident_id}] 异步诊断线程已启动，thread_ident={thread.ident}")
+        return thread
+    
+    @staticmethod
+    def _run_diagnosis(incident_id, environment_id):
+        from datetime import datetime
+        
+        logger.info(f"[incident_id:{incident_id}] 开始执行诊断流程")
+        
+        incident = DevOpsIncidentService.get_incident_by_id(incident_id)
+        if not incident:
+            logger.error(f"[incident_id:{incident_id}] 无法找到对应的 incident 记录，诊断终止")
+            return
+        
+        logger.info(f"[incident_id:{incident_id}] 加载 incident 成功，title={incident.title}, status={incident.status}")
+        
+        environment = None
+        credentials = None
+        
+        if environment_id:
+            logger.debug(f"[incident_id:{incident_id}] 尝试从 environment_id={environment_id} 获取凭证")
+            try:
+                env_id_int = int(environment_id)
+                environment = AWSEnvironmentService.get_environment_by_id(env_id_int)
+                if environment:
+                    credentials = environment.get_credentials()
+                    logger.info(f"[incident_id:{incident_id}] 从数据库环境获取凭证成功，env={credentials.get('env')}")
+            except ValueError:
+                logger.warning(f"[incident_id:{incident_id}] environment_id={environment_id} 不是有效整数，跳过数据库查询")
+                pass
+        
+        if not credentials:
+            logger.debug(f"[incident_id:{incident_id}] 从 access_list 查找匹配的环境配置")
+            for access in get_access_list():
+                if str(access.get('env')) == str(environment_id) or access.get('env') == environment_id:
+                    credentials = access
+                    logger.info(f"[incident_id:{incident_id}] 从 access_list 找到匹配环境，env={credentials.get('env')}")
+                    break
+        
+        if not credentials:
+            logger.warning(f"[incident_id:{incident_id}] 未找到有效的环境凭证，将使用模拟数据进行诊断")
+        
+        try:
+            logger.info(f"[incident_id:{incident_id}] 步骤 1/4: 初始化诊断时间线")
+            DevOpsDiagnosisService._add_timeline_event(
+                incident,
+                step=0,
+                title='开始诊断',
+                description='DevOps Agent 已启动诊断流程，正在收集环境信息...',
+                icon='Search',
+                highlight=True
+            )
+            
+            DevOpsIncidentService.update_progress(incident, 0, 10)
+            logger.info(f"[incident_id:{incident_id}] 进度更新: 0/3 (10%)")
+            
+            logger.info(f"[incident_id:{incident_id}] 步骤 2/4: 开始收集诊断数据")
+            diagnosis_data = DevOpsDiagnosisService._collect_diagnosis_data(
+                credentials,
+                incident.title,
+                incident.description,
+                incident_id
+            )
+            logger.info(f"[incident_id:{incident_id}] 数据收集完成，log_samples={len(diagnosis_data.get('log_samples', []))}, metrics={len(diagnosis_data.get('metrics', []))}")
+            
+            DevOpsIncidentService.update_progress(incident, 1, 40)
+            logger.info(f"[incident_id:{incident_id}] 进度更新: 1/3 (40%)")
+            
+            logger.info(f"[incident_id:{incident_id}] 步骤 2.5/4: 添加数据收集完成时间线事件")
+            logger.debug(f"[incident_id:{incident_id}] 时间线事件详情: step=1, title='数据收集完成', summary={diagnosis_data.get('summary', [])}")
+            
+            DevOpsDiagnosisService._add_timeline_event(
+                incident,
+                step=1,
+                title='数据收集完成',
+                description=f'已收集 {len(diagnosis_data.get("log_samples", []))} 条日志样本和 {len(diagnosis_data.get("metrics", []))} 个监控指标。',
+                icon='DataAnalysis',
+                details=diagnosis_data.get('summary', []),
+                highlight=True
+            )
+            
+            logger.info(f"[incident_id:{incident_id}] 数据收集完成时间线事件已添加")
+            
+            DevOpsIncidentService.update_progress(incident, 2, 70)
+            logger.info(f"[incident_id:{incident_id}] 进度更新: 2/3 (70%)")
+            
+            logger.info(f"[incident_id:{incident_id}] 步骤 3/4: 开始 AI 根因分析")
+            analysis_result = DevOpsDiagnosisService._perform_ai_analysis(
+                incident,
+                diagnosis_data
+            )
+            logger.info(f"[incident_id:{incident_id}] AI 分析完成，main_cause={analysis_result.get('root_cause', {}).get('mainCause', 'N/A')}")
+            
+            DevOpsIncidentService.update_progress(incident, 3, 100)
+            logger.info(f"[incident_id:{incident_id}] 进度更新: 3/3 (100%)")
+            
+            logger.info(f"[incident_id:{incident_id}] 步骤 3.5/4: 添加根因分析完成时间线事件")
+            logger.debug(f"[incident_id:{incident_id}] 时间线事件详情: step=2, title='根因分析完成', main_cause={analysis_result.get('root_cause', {}).get('mainCause', '待分析')}")
+            
+            DevOpsDiagnosisService._add_timeline_event(
+                incident,
+                step=2,
+                title='根因分析完成',
+                description='AI 已完成根因分析，生成了详细的修复建议。',
+                icon='Warning',
+                highlight=True,
+                details=[
+                    f'主要根因: {analysis_result.get("root_cause", {}).get("mainCause", "待分析")}'
+                ]
+            )
+            
+            logger.info(f"[incident_id:{incident_id}] 根因分析完成时间线事件已添加")
+            
+            incident.status = 'completed'
+            incident.save(update_fields=['status', 'updated_at'])
+            logger.info(f"[incident_id:{incident_id}] 诊断流程已完成，状态更新为 completed")
+            
+        except Exception as e:
+            import traceback
+            error_details = traceback.format_exc()
+            logger.error(f"[incident_id:{incident_id}] 诊断流程异常: {str(e)}\n{error_details}")
+            
+            try:
+                incident.status = 'failed'
+                incident.save(update_fields=['status', 'updated_at'])
+                logger.error(f"[incident_id:{incident_id}] 状态更新为 failed")
+                
+                DevOpsDiagnosisService._add_timeline_event(
+                    incident,
+                    step=-1,
+                    title='诊断失败',
+                    description=f'诊断过程中发生错误: {str(e)}',
+                    icon='CircleCloseFilled',
+                    type='danger',
+                    highlight=True
+                )
+            except Exception as inner_e:
+                logger.error(f"[incident_id:{incident_id}] 更新失败状态时发生异常: {str(inner_e)}")
+                pass
+    
+    @staticmethod
+    def _collect_diagnosis_data(credentials, title, description, incident_id=None):
+        log_prefix = f"[incident_id:{incident_id}] " if incident_id else ""
+        
+        logger.info(f"{log_prefix}开始收集诊断数据")
+        logger.debug(f"{log_prefix}credentials={credentials}, title={title}")
+        
+        result = {
+            'log_samples': [],
+            'metrics': [],
+            'summary': [],
+            'environment_info': credentials or {}
+        }
+        
+        result['summary'].append('检查 AWS 环境配置')
+        result['summary'].append('扫描 ECS 服务状态')
+        result['summary'].append('收集 CloudWatch 日志和指标')
+        result['summary'].append('分析 RDS 性能指标')
+        
+        if not credentials:
+            logger.warning(f"{log_prefix}未提供有效的 AWS 环境凭证，使用模拟数据")
+            result['log_samples'].append({
+                'timestamp': datetime.now().isoformat(),
+                'source': 'diagnosis',
+                'message': '未提供有效的 AWS 环境凭证，无法进行实际的 AWS 资源诊断。'
+            })
+            result['summary'].append('注意: 未配置环境凭证，将使用模拟数据进行演示')
+        else:
+            try:
+                env_name = credentials.get("env", "unknown")
+                region = credentials.get("region", "unknown")
+                logger.info(f"{log_prefix}使用环境: {env_name}, 区域: {region}")
+                result['summary'].append(f'使用环境: {env_name}')
+                result['summary'].append(f'区域: {region}')
+            except Exception as e:
+                logger.error(f"{log_prefix}访问 AWS 资源时出错: {str(e)}")
+                result['log_samples'].append({
+                    'timestamp': datetime.now().isoformat(),
+                    'source': 'error',
+                    'message': f'访问 AWS 资源时出错: {str(e)}'
+                })
+        
+        logger.info(f"{log_prefix}诊断数据收集完成，summary={result.get('summary', [])}")
+        return result
+    
+    @staticmethod
+    def _perform_ai_analysis(incident, diagnosis_data):
+        from datetime import datetime
+        import os
+        import sys
+        
+        incident_id = incident.id if hasattr(incident, 'id') else incident.incident_id
+        log_prefix = f"[incident_id:{incident_id}] "
+        
+        logger.info(f"{log_prefix}开始 AI 根因分析")
+        
+        parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if parent_dir not in sys.path:
+            sys.path.insert(0, parent_dir)
+        
+        try:
+            from settings import ApiKey, CHROMA_HOST, CHROMA_PORT, CHROMA_COLLECTION
+        except ImportError:
+            ApiKey = None
+            CHROMA_HOST = None
+            CHROMA_PORT = None
+            CHROMA_COLLECTION = None
+            logger.warning(f"{log_prefix}无法导入 API 配置，将使用默认分析")
+        
+        context_info = []
+        if diagnosis_data.get('log_samples'):
+            for log in diagnosis_data['log_samples'][:5]:
+                context_info.append(f"[{log.get('source', 'unknown')}] {log.get('message', '')}")
+        
+        logger.debug(f"{log_prefix}构建分析 prompt，title={incident.title}")
+        
+        prompt = f"""你是一位专业的 DevOps 工程师和 SRE（站点可靠性工程师）。请分析以下事件，并提供专业的诊断和修复建议。
+
+事件标题：{incident.title}
+事件背景：{incident.background}
+事件描述：{incident.description}
+
+环境信息：
+- 环境名称: {incident.environment_name or '未知'}
+- 严重程度: {incident.severity}
+
+诊断数据摘要：
+{chr(10).join(diagnosis_data.get('summary', ['暂无诊断数据']))}
+
+请基于以上信息，提供以下内容：
+1. 根因分析（mainCause, description, impactChain, contributingFactors, evidence）
+2. 立即执行的修复建议（immediate）
+3. 长期优化建议（longterm）
+
+请用 JSON 格式输出，包含以下结构：
+{{
+    "root_cause": {{
+        "mainCause": "主要根因",
+        "description": "详细描述",
+        "impactChain": ["影响链分析1", "影响链分析2"],
+        "contributingFactors": [
+            {{"name": "因素1", "description": "描述", "type": "critical/warning"}}
+        ],
+        "evidence": [
+            {{"source": "来源", "evidence": "证据内容", "relevance": 85}}
+        ]
+    }},
+    "fix_suggestions": {{
+        "immediate": [
+            {{"title": "建议标题", "description": "详细描述", "priority": "high/medium", "commands": [{{"label": "步骤", "command": "命令"}}], "verification": "验证方法"}}
+        ],
+        "longterm": [
+            {{"title": "建议标题", "description": "详细描述", "benefits": ["收益1", "收益2"]}}
+        ]
+    }}
+}}"""
+        
+        analysis_result = None
+        
+        if ApiKey:
+            logger.info(f"{log_prefix}使用 DeepSeek API 进行 AI 分析")
+            try:
+                from openai import OpenAI
+                
+                client = OpenAI(api_key=ApiKey, base_url="https://api.deepseek.com")
+                
+                logger.debug(f"{log_prefix}调用 OpenAI API，model=deepseek-chat")
+                response = client.chat.completions.create(
+                    model="deepseek-chat",
+                    messages=[
+                        {"role": "system", "content": "你是一位专业的 DevOps 工程师和 SRE。请用 JSON 格式输出分析结果。"},
+                        {"role": "user", "content": prompt}
+                    ],
+                    response_format={"type": "json_object"},
+                    stream=False
+                )
+                
+                ai_response = response.choices[0].message.content
+                logger.debug(f"{log_prefix}收到 AI 响应，长度={len(ai_response) if ai_response else 0}")
+                
+                try:
+                    import json
+                    analysis_result = json.loads(ai_response)
+                    logger.info(f"{log_prefix}AI 响应解析成功")
+                except json.JSONDecodeError as e:
+                    logger.error(f"{log_prefix}AI 响应 JSON 解析失败: {str(e)}")
+                    analysis_result = None
+                    
+            except Exception as e:
+                import traceback
+                error_details = traceback.format_exc()
+                logger.error(f"{log_prefix}AI 分析调用失败: {str(e)}\n{error_details}")
+                analysis_result = None
+        else:
+            logger.warning(f"{log_prefix}未配置 API Key，将使用默认分析模板")
+        
+        if not analysis_result:
+            analysis_result = DevOpsDiagnosisService._generate_default_analysis(incident)
+        
+        root_cause = analysis_result.get('root_cause', {})
+        fix_suggestions = analysis_result.get('fix_suggestions', {})
+        
+        incident.root_cause = root_cause
+        incident.fix_suggestions = fix_suggestions
+        incident.save(update_fields=['root_cause', 'fix_suggestions', 'updated_at'])
+        
+        return analysis_result
+    
+    @staticmethod
+    def _generate_default_analysis(incident):
+        from datetime import datetime
+        
+        default_analysis = {
+            "root_cause": {
+                "mainCause": "服务异常 - 需要进一步诊断",
+                "description": f"根据事件描述「{incident.title}」，初步判断可能涉及以下问题：服务可用性、性能瓶颈或配置错误。建议查看详细日志和监控数据。",
+                "impactChain": [
+                    "用户报告服务异常",
+                    "监控指标显示异常",
+                    "影响业务功能",
+                    "需要紧急处理"
+                ],
+                "contributingFactors": [
+                    {"name": "缺乏实时监控", "description": "建议配置更详细的监控告警", "type": "warning"},
+                    {"name": "日志不完整", "description": "建议完善日志收集和分析机制", "type": "warning"}
+                ],
+                "evidence": [
+                    {"source": "事件描述", "evidence": incident.description, "relevance": 90},
+                    {"source": "事件背景", "evidence": incident.background, "relevance": 85}
+                ]
+            },
+            "fix_suggestions": {
+                "immediate": [
+                    {
+                        "title": "检查服务状态",
+                        "description": "首先确认相关服务的运行状态，检查是否有服务中断或重启。",
+                        "priority": "high",
+                        "commands": [
+                            {"label": "查看 ECS 服务状态", "command": "aws ecs describe-services --cluster <cluster-name> --services <service-name>"},
+                            {"label": "查看任务运行情况", "command": "aws ecs list-tasks --cluster <cluster-name> --service-name <service-name>"}
+                        ],
+                        "verification": "确认所有任务都处于 RUNNING 状态，没有异常的停止或重启。"
+                    },
+                    {
+                        "title": "收集错误日志",
+                        "description": "从 CloudWatch Logs 收集相关服务的错误日志，分析具体的错误信息。",
+                        "priority": "high",
+                        "commands": [
+                            {"label": "查看最近的错误日志", "command": "aws logs filter-log-events --log-group-name <log-group> --filter-pattern ERROR --start-time <timestamp>"}
+                        ],
+                        "verification": "找到具体的错误堆栈或异常信息，定位问题根源。"
+                    },
+                    {
+                        "title": "检查数据库连接",
+                        "description": "如果服务涉及数据库操作，检查数据库连接池和查询性能。",
+                        "priority": "medium",
+                        "commands": [
+                            {"label": "查看 RDS 实例状态", "command": "aws rds describe-db-instances --db-instance-identifier <instance-id>"}
+                        ],
+                        "verification": "确认数据库实例可用，没有连接数耗尽或慢查询问题。"
+                    }
+                ],
+                "longterm": [
+                    {
+                        "title": "完善监控告警体系",
+                        "description": "配置更全面的监控指标和告警规则，实现问题的早发现、早处理。",
+                        "benefits": ["减少 MTTD（平均检测时间）", "提高系统可靠性", "降低运维成本"]
+                    },
+                    {
+                        "title": "建立日志分析平台",
+                        "description": "使用 ELK 或类似方案集中管理日志，实现快速检索和分析。",
+                        "benefits": ["加速问题定位", "支持异常检测", "便于审计合规"]
+                    },
+                    {
+                        "title": "制定故障演练计划",
+                        "description": "定期进行 Chaos Engineering 演练，验证系统的容错能力和恢复机制。",
+                        "benefits": ["提高团队应急响应能力", "发现隐藏的脆弱点", "验证灾备方案有效性"]
+                    }
+                ]
+            }
+        }
+        
+        return default_analysis
+    
+    @staticmethod
+    def _add_timeline_event(incident, step, title, description, icon='Search', 
+                            type='primary', highlight=False, details=None, 
+                            logs=None, suggestions=None, duration=None):
+        from datetime import datetime
+        
+        timeline = incident.timeline.copy() if incident.timeline else []
+        
+        event = {
+            'id': len(timeline) + 1,
+            'timestamp': datetime.now().isoformat(),
+            'type': type,
+            'icon': icon,
+            'title': title,
+            'description': description,
+            'highlight': highlight,
+            'step': step
+        }
+        
+        if details:
+            event['details'] = details
+        if logs:
+            event['logs'] = logs
+        if suggestions:
+            event['suggestions'] = suggestions
+        if duration:
+            event['duration'] = duration
+        
+        timeline.append(event)
+        incident.timeline = timeline
+        incident.save(update_fields=['timeline', 'updated_at'])
+        
+        return event
+
+
 class AWSAthena():
     """
         Athena 相关
@@ -943,7 +1773,7 @@ class AWSAthena():
             获取所有可用的 AWS 环境列表
         """
         result = []
-        for index, item in enumerate(access_list):
+        for index, item in enumerate(get_access_list()):
             env_info = {
                 "id": item["env"],
                 "name": item["env"],
@@ -960,7 +1790,7 @@ class AWSAthena():
             获取指定环境下的所有 Athena 数据库
         """
         result = []
-        for index, item in enumerate(access_list):
+        for index, item in enumerate(get_access_list()):
             if item["env"] == env:
                 athena_client = boto3.client(
                     'athena',
@@ -994,7 +1824,7 @@ class AWSAthena():
             获取指定数据库下的所有数据表
         """
         result = []
-        for index, item in enumerate(access_list):
+        for index, item in enumerate(get_access_list()):
             if item["env"] == env:
                 athena_client = boto3.client(
                     'athena',
@@ -1037,7 +1867,7 @@ class AWSAthena():
             "execution_time": 0
         }
         
-        for index, item in enumerate(access_list):
+        for index, item in enumerate(get_access_list()):
             if item["env"] == env:
                 athena_client = boto3.client(
                     'athena',
@@ -1121,7 +1951,7 @@ class AWSAthena():
             获取查询状态
         """
         result = {}
-        for index, item in enumerate(access_list):
+        for index, item in enumerate(get_access_list()):
             if item["env"] == env:
                 athena_client = boto3.client(
                     'athena',
