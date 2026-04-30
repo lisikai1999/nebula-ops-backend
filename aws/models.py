@@ -1411,6 +1411,9 @@ class DevOpsDiagnosisService:
             DevOpsIncidentService.update_progress(incident, 1, 40)
             logger.info(f"[incident_id:{incident_id}] 进度更新: 1/3 (40%)")
             
+            logger.info(f"[incident_id:{incident_id}] 步骤 2.5/4: 添加数据收集完成时间线事件")
+            logger.debug(f"[incident_id:{incident_id}] 时间线事件详情: step=1, title='数据收集完成', summary={diagnosis_data.get('summary', [])}")
+            
             DevOpsDiagnosisService._add_timeline_event(
                 incident,
                 step=1,
@@ -1420,6 +1423,8 @@ class DevOpsDiagnosisService:
                 details=diagnosis_data.get('summary', []),
                 highlight=True
             )
+            
+            logger.info(f"[incident_id:{incident_id}] 数据收集完成时间线事件已添加")
             
             DevOpsIncidentService.update_progress(incident, 2, 70)
             logger.info(f"[incident_id:{incident_id}] 进度更新: 2/3 (70%)")
@@ -1434,6 +1439,9 @@ class DevOpsDiagnosisService:
             DevOpsIncidentService.update_progress(incident, 3, 100)
             logger.info(f"[incident_id:{incident_id}] 进度更新: 3/3 (100%)")
             
+            logger.info(f"[incident_id:{incident_id}] 步骤 3.5/4: 添加根因分析完成时间线事件")
+            logger.debug(f"[incident_id:{incident_id}] 时间线事件详情: step=2, title='根因分析完成', main_cause={analysis_result.get('root_cause', {}).get('mainCause', '待分析')}")
+            
             DevOpsDiagnosisService._add_timeline_event(
                 incident,
                 step=2,
@@ -1445,6 +1453,8 @@ class DevOpsDiagnosisService:
                     f'主要根因: {analysis_result.get("root_cause", {}).get("mainCause", "待分析")}'
                 ]
             )
+            
+            logger.info(f"[incident_id:{incident_id}] 根因分析完成时间线事件已添加")
             
             incident.status = 'completed'
             incident.save(update_fields=['status', 'updated_at'])
