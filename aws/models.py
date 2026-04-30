@@ -1,3 +1,4 @@
+import logging
 from django.db import models
 from django.utils import timezone
 import pytz
@@ -10,6 +11,8 @@ from datetime import datetime, timedelta
 
 from utils import iam, logs, cloudwatch, ecs as ECS, route53, elbv2
 from settings import emailList, adminEmail, adminPassword, ccEmail, rdsSizeList
+
+logger = logging.getLogger('aws.devops')
 
 
 class AWSEnvironment(models.Model):
@@ -1331,6 +1334,8 @@ class DevOpsDiagnosisService:
     def start_async_diagnosis(incident_id, environment_id):
         import threading
         
+        logger.info(f"[incident_id:{incident_id}] 启动异步诊断任务，environment_id={environment_id}")
+        
         thread = threading.Thread(
             target=DevOpsDiagnosisService._run_diagnosis,
             args=(incident_id, environment_id)
@@ -1338,35 +1343,50 @@ class DevOpsDiagnosisService:
         thread.daemon = True
         thread.start()
         
+        logger.info(f"[incident_id:{incident_id}] 异步诊断线程已启动，thread_ident={thread.ident}")
         return thread
     
     @staticmethod
     def _run_diagnosis(incident_id, environment_id):
         from datetime import datetime
         
+        logger.info(f"[incident_id:{incident_id}] 开始执行诊断流程")
+        
         incident = DevOpsIncidentService.get_incident_by_id(incident_id)
         if not incident:
+            logger.error(f"[incident_id:{incident_id}] 无法找到对应的 incident 记录，诊断终止")
             return
+        
+        logger.info(f"[incident_id:{incident_id}] 加载 incident 成功，title={incident.title}, status={incident.status}")
         
         environment = None
         credentials = None
         
         if environment_id:
+            logger.debug(f"[incident_id:{incident_id}] 尝试从 environment_id={environment_id} 获取凭证")
             try:
                 env_id_int = int(environment_id)
                 environment = AWSEnvironmentService.get_environment_by_id(env_id_int)
                 if environment:
                     credentials = environment.get_credentials()
+                    logger.info(f"[incident_id:{incident_id}] 从数据库环境获取凭证成功，env={credentials.get('env')}")
             except ValueError:
+                logger.warning(f"[incident_id:{incident_id}] environment_id={environment_id} 不是有效整数，跳过数据库查询")
                 pass
         
         if not credentials:
+            logger.debug(f"[incident_id:{incident_id}] 从 access_list 查找匹配的环境配置")
             for access in get_access_list():
                 if str(access.get('env')) == str(environment_id) or access.get('env') == environment_id:
                     credentials = access
+                    logger.info(f"[incident_id:{incident_id}] 从 access_list 找到匹配环境，env={credentials.get('env')}")
                     break
         
+        if not credentials:
+            logger.warning(f"[incident_id:{incident_id}] 未找到有效的环境凭证，将使用模拟数据进行诊断")
+        
         try:
+            logger.info(f"[incident_id:{incident_id}] 步骤 1/4: 初始化诊断时间线")
             DevOpsDiagnosisService._add_timeline_event(
                 incident,
                 step=0,
@@ -1377,14 +1397,20 @@ class DevOpsDiagnosisService:
             )
             
             DevOpsIncidentService.update_progress(incident, 0, 10)
+            logger.info(f"[incident_id:{incident_id}] 进度更新: 0/3 (10%)")
             
+            logger.info(f"[incident_id:{incident_id}] 步骤 2/4: 开始收集诊断数据")
             diagnosis_data = DevOpsDiagnosisService._collect_diagnosis_data(
                 credentials,
                 incident.title,
-                incident.description
+                incident.description,
+                incident_id
             )
+            logger.info(f"[incident_id:{incident_id}] 数据收集完成，log_samples={len(diagnosis_data.get('log_samples', []))}, metrics={len(diagnosis_data.get('metrics', []))}")
             
             DevOpsIncidentService.update_progress(incident, 1, 40)
+            logger.info(f"[incident_id:{incident_id}] 进度更新: 1/3 (40%)")
+            
             DevOpsDiagnosisService._add_timeline_event(
                 incident,
                 step=1,
@@ -1396,13 +1422,17 @@ class DevOpsDiagnosisService:
             )
             
             DevOpsIncidentService.update_progress(incident, 2, 70)
+            logger.info(f"[incident_id:{incident_id}] 进度更新: 2/3 (70%)")
             
+            logger.info(f"[incident_id:{incident_id}] 步骤 3/4: 开始 AI 根因分析")
             analysis_result = DevOpsDiagnosisService._perform_ai_analysis(
                 incident,
                 diagnosis_data
             )
+            logger.info(f"[incident_id:{incident_id}] AI 分析完成，main_cause={analysis_result.get('root_cause', {}).get('mainCause', 'N/A')}")
             
             DevOpsIncidentService.update_progress(incident, 3, 100)
+            logger.info(f"[incident_id:{incident_id}] 进度更新: 3/3 (100%)")
             
             DevOpsDiagnosisService._add_timeline_event(
                 incident,
@@ -1418,15 +1448,17 @@ class DevOpsDiagnosisService:
             
             incident.status = 'completed'
             incident.save(update_fields=['status', 'updated_at'])
+            logger.info(f"[incident_id:{incident_id}] 诊断流程已完成，状态更新为 completed")
             
         except Exception as e:
             import traceback
             error_details = traceback.format_exc()
-            print(f"诊断流程异常: {str(e)}\n{error_details}")
+            logger.error(f"[incident_id:{incident_id}] 诊断流程异常: {str(e)}\n{error_details}")
             
             try:
                 incident.status = 'failed'
                 incident.save(update_fields=['status', 'updated_at'])
+                logger.error(f"[incident_id:{incident_id}] 状态更新为 failed")
                 
                 DevOpsDiagnosisService._add_timeline_event(
                     incident,
@@ -1437,11 +1469,17 @@ class DevOpsDiagnosisService:
                     type='danger',
                     highlight=True
                 )
-            except Exception:
+            except Exception as inner_e:
+                logger.error(f"[incident_id:{incident_id}] 更新失败状态时发生异常: {str(inner_e)}")
                 pass
     
     @staticmethod
-    def _collect_diagnosis_data(credentials, title, description):
+    def _collect_diagnosis_data(credentials, title, description, incident_id=None):
+        log_prefix = f"[incident_id:{incident_id}] " if incident_id else ""
+        
+        logger.info(f"{log_prefix}开始收集诊断数据")
+        logger.debug(f"{log_prefix}credentials={credentials}, title={title}")
+        
         result = {
             'log_samples': [],
             'metrics': [],
@@ -1455,6 +1493,7 @@ class DevOpsDiagnosisService:
         result['summary'].append('分析 RDS 性能指标')
         
         if not credentials:
+            logger.warning(f"{log_prefix}未提供有效的 AWS 环境凭证，使用模拟数据")
             result['log_samples'].append({
                 'timestamp': datetime.now().isoformat(),
                 'source': 'diagnosis',
@@ -1463,15 +1502,20 @@ class DevOpsDiagnosisService:
             result['summary'].append('注意: 未配置环境凭证，将使用模拟数据进行演示')
         else:
             try:
-                result['summary'].append(f'使用环境: {credentials.get("env", "unknown")}')
-                result['summary'].append(f'区域: {credentials.get("region", "unknown")}')
+                env_name = credentials.get("env", "unknown")
+                region = credentials.get("region", "unknown")
+                logger.info(f"{log_prefix}使用环境: {env_name}, 区域: {region}")
+                result['summary'].append(f'使用环境: {env_name}')
+                result['summary'].append(f'区域: {region}')
             except Exception as e:
+                logger.error(f"{log_prefix}访问 AWS 资源时出错: {str(e)}")
                 result['log_samples'].append({
                     'timestamp': datetime.now().isoformat(),
                     'source': 'error',
                     'message': f'访问 AWS 资源时出错: {str(e)}'
                 })
         
+        logger.info(f"{log_prefix}诊断数据收集完成，summary={result.get('summary', [])}")
         return result
     
     @staticmethod
@@ -1479,6 +1523,11 @@ class DevOpsDiagnosisService:
         from datetime import datetime
         import os
         import sys
+        
+        incident_id = incident.id if hasattr(incident, 'id') else incident.incident_id
+        log_prefix = f"[incident_id:{incident_id}] "
+        
+        logger.info(f"{log_prefix}开始 AI 根因分析")
         
         parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         if parent_dir not in sys.path:
@@ -1491,11 +1540,14 @@ class DevOpsDiagnosisService:
             CHROMA_HOST = None
             CHROMA_PORT = None
             CHROMA_COLLECTION = None
+            logger.warning(f"{log_prefix}无法导入 API 配置，将使用默认分析")
         
         context_info = []
         if diagnosis_data.get('log_samples'):
             for log in diagnosis_data['log_samples'][:5]:
                 context_info.append(f"[{log.get('source', 'unknown')}] {log.get('message', '')}")
+        
+        logger.debug(f"{log_prefix}构建分析 prompt，title={incident.title}")
         
         prompt = f"""你是一位专业的 DevOps 工程师和 SRE（站点可靠性工程师）。请分析以下事件，并提供专业的诊断和修复建议。
 
@@ -1541,11 +1593,13 @@ class DevOpsDiagnosisService:
         analysis_result = None
         
         if ApiKey:
+            logger.info(f"{log_prefix}使用 DeepSeek API 进行 AI 分析")
             try:
                 from openai import OpenAI
                 
                 client = OpenAI(api_key=ApiKey, base_url="https://api.deepseek.com")
                 
+                logger.debug(f"{log_prefix}调用 OpenAI API，model=deepseek-chat")
                 response = client.chat.completions.create(
                     model="deepseek-chat",
                     messages=[
@@ -1557,15 +1611,23 @@ class DevOpsDiagnosisService:
                 )
                 
                 ai_response = response.choices[0].message.content
+                logger.debug(f"{log_prefix}收到 AI 响应，长度={len(ai_response) if ai_response else 0}")
+                
                 try:
                     import json
                     analysis_result = json.loads(ai_response)
-                except json.JSONDecodeError:
+                    logger.info(f"{log_prefix}AI 响应解析成功")
+                except json.JSONDecodeError as e:
+                    logger.error(f"{log_prefix}AI 响应 JSON 解析失败: {str(e)}")
                     analysis_result = None
                     
             except Exception as e:
-                print(f"AI 分析调用失败: {str(e)}")
+                import traceback
+                error_details = traceback.format_exc()
+                logger.error(f"{log_prefix}AI 分析调用失败: {str(e)}\n{error_details}")
                 analysis_result = None
+        else:
+            logger.warning(f"{log_prefix}未配置 API Key，将使用默认分析模板")
         
         if not analysis_result:
             analysis_result = DevOpsDiagnosisService._generate_default_analysis(incident)
